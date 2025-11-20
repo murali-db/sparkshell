@@ -80,6 +80,24 @@ class SparkConfig:
     configs: dict = field(default_factory=dict)
 
 
+@dataclass
+class DeltaConfig:
+    """Delta Lake dependency configuration."""
+    source_repo: str
+    source_branch: str = "master"
+
+    def __post_init__(self):
+        """Validate configuration."""
+        if not self.source_repo.startswith("http"):
+            raise ValueError(
+                f"source_repo must be a URL (starting with 'http'), got: {self.source_repo}"
+            )
+
+    def get_cache_key_component(self) -> str:
+        """Get a unique string for cache key computation."""
+        return f"delta_{self.source_repo}_{self.source_branch}"
+
+
 class SparkShell:
     """
     A standalone class to manage SparkApp server lifecycle and SQL execution.
@@ -99,7 +117,8 @@ class SparkShell:
         temp_dir: Optional[str] = None,
         uc_config: Optional[UCConfig] = None,
         op_config: Optional[OpConfig] = None,
-        spark_config: Optional[SparkConfig] = None
+        spark_config: Optional[SparkConfig] = None,
+        delta_config: Optional[DeltaConfig] = None
     ):
         """
         Initialize SparkShell.
@@ -111,6 +130,7 @@ class SparkShell:
             uc_config: Unity Catalog configuration (UCConfig object)
             op_config: Operational configuration (OpConfig object)
             spark_config: Spark configuration (SparkConfig object)
+            delta_config: Delta Lake configuration (DeltaConfig object)
         """
         self.source = source
         self.port = port
@@ -120,6 +140,10 @@ class SparkShell:
         self.op_config = op_config or OpConfig()
         self.spark_config = spark_config or SparkConfig()
         self.uc_config = uc_config or UCConfig()
+        self.delta_config = delta_config or DeltaConfig(
+            source_repo="https://github.com/delta-io/delta",
+            source_branch="master"
+        )
 
         # Configure Unity Catalog if URI and token are provided
         if self.uc_config.uri and self.uc_config.token:
@@ -143,14 +167,19 @@ class SparkShell:
         Compute a hash of the source to use as cache key.
         For local paths, hash the absolute path.
         For URLs, hash the URL itself.
+        Includes Delta configuration to prevent cache collision.
         """
         source_str = str(Path(self.source).resolve()) if not self.source.startswith("http") else self.source
-        source_hash = hashlib.sha256(source_str.encode()).hexdigest()[:16]
+        delta_str = self.delta_config.get_cache_key_component()
+        combined = f"{source_str}_{delta_str}"
+        source_hash = hashlib.sha256(combined.encode()).hexdigest()[:16]
 
         if self.op_config.verbose:
             print(f"[SparkShell] Cache key computation:")
             print(f"  Source: {self.source}")
             print(f"  Normalized: {source_str}")
+            print(f"  Delta config: {delta_str}")
+            print(f"  Combined: {combined}")
             print(f"  Cache key (hash): {source_hash}")
 
         return source_hash
