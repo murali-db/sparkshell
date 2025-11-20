@@ -1,0 +1,196 @@
+# SparkShell Development Instructions
+
+## Project Overview
+SparkShell is a Python wrapper for managing SparkApp server lifecycle. It provides:
+- Automatic download/copy of source code
+- Automatic SBT build with assembly JAR creation
+- Build caching in ~/.sparkshell_cache for faster startups
+- REST API server management for SQL execution
+- Delta Lake and Unity Catalog support
+
+## Code Organization Principles
+
+### 1. Configuration Classes
+Always use dataclasses for grouped configuration:
+- `UCConfig`: Unity Catalog configuration (uri, token, catalog, schema)
+- `OpConfig`: Operational configuration (verbose, auto_start, cleanup_on_exit, timeouts)
+- `SparkConfig`: Spark configuration settings (configs dict)
+
+**Never accept individual parameters** - always require config objects:
+```python
+# Good
+shell = SparkShell(source=".", op_config=OpConfig(verbose=False))
+
+# Bad - Do not support this
+shell = SparkShell(source=".", verbose=False)
+```
+
+### 2. Automatic Behavior
+SparkShell should minimize user steps:
+- `start()` automatically calls `setup()` and `build()` if needed
+- Build caching automatically speeds up subsequent startups
+- Context manager (`with` statement) automatically handles lifecycle
+
+### 3. Build Caching
+- Builds are cached in `~/.sparkshell_cache/<hash>/`
+- Hash is based on SHA-256 of source path/URL (first 16 chars)
+- `start(force_refresh=True)` bypasses cache for fresh build
+- Caching is transparent - no user action required
+
+## Testing Requirements
+
+### Always Run Tests After Changes
+**CRITICAL**: After every code change, always run `./run-tests.sh` to verify everything works.
+
+Test file locations:
+- Scala tests: `src/test/scala/com/sparkshell/`
+- Python tests: `tests/test_spark_shell.py`
+
+### Test Patterns
+1. Configuration tests verify all config classes work correctly
+2. Integration tests build real JAR and run server
+3. Tests use temporary directories and cleanup automatically
+4. Tests verify caching behavior works correctly
+
+## Code Style Guidelines
+
+### 1. Method Signatures
+Always include clear docstrings with Args and Returns:
+```python
+def start(self, force_refresh: bool = False):
+    """
+    Start the SparkApp server (automatically handles setup and build if needed).
+
+    Args:
+        force_refresh: If True, force fresh download and rebuild, bypassing cache (default: False)
+    """
+```
+
+### 2. Verbose Mode
+All command execution should respect `op_config.verbose`:
+- When `verbose=True`: Stream command output in real-time
+- When `verbose=False`: Capture output silently
+- Use `_run_command()` helper for consistent behavior
+
+### 3. Error Handling
+- Raise `RuntimeError` with descriptive messages
+- Include relevant context (paths, commands, logs)
+- Validate inputs early (check file existence, port availability)
+
+## File Structure
+```
+sparkshell/
+├── spark_shell.py          # Main module (config classes + SparkShell class)
+├── spark_shell_example.py  # Example CLI usage
+├── run-tests.sh           # Unified test runner (Scala + Python)
+├── tests/
+│   └── test_spark_shell.py # Integration tests
+├── src/
+│   ├── main/scala/        # Scala server implementation
+│   └── test/scala/        # Scala unit tests
+└── build.sbt              # SBT build configuration
+```
+
+## Common Patterns
+
+### Creating a SparkShell Instance
+```python
+from spark_shell import SparkShell, UCConfig, OpConfig, SparkConfig
+
+# Basic usage
+with SparkShell(source=".") as shell:
+    result = shell.execute_sql("SELECT 1")
+
+# With configuration
+op_config = OpConfig(verbose=True, cleanup_on_exit=True)
+spark_config = SparkConfig(configs={"spark.executor.memory": "2g"})
+uc_config = UCConfig(uri="http://localhost:8081", token="token")
+
+with SparkShell(source=".", op_config=op_config, spark_config=spark_config, uc_config=uc_config) as shell:
+    result = shell.execute_sql("SELECT * FROM table")
+```
+
+### Force Fresh Build
+```python
+# Bypass cache and force fresh build
+shell = SparkShell(source=".")
+shell.start(force_refresh=True)
+```
+
+## Git Workflow
+
+### Committing Changes
+1. Always stage only relevant files in experimental/sparkshell/
+2. Include clear, descriptive commit messages
+3. Always add Claude attribution:
+   ```
+   🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+   Co-Authored-By: Claude <noreply@anthropic.com>
+   ```
+
+### Running Tests Before Commit
+```bash
+./run-tests.sh
+# Wait for both Scala and Python tests to pass
+# Only commit if all tests pass
+```
+
+## Key Implementation Details
+
+### Build Caching Implementation
+1. `_get_source_hash()`: Compute SHA-256 hash of source path/URL
+2. `_get_cache_dir()`: Return `~/.sparkshell_cache/<hash>/`
+3. `_has_cached_build()`: Check if JAR exists in cache
+4. `_use_cached_build()`: Use existing cached JAR
+5. `_cache_build()`: Copy built JAR to cache after successful build
+
+### Automatic Setup/Build Flow
+1. `start()` checks if `work_dir` exists, calls `setup()` if not
+2. `start()` checks if `jar_path` exists, calls `build()` if not
+3. `setup()` and `build()` respect `force_refresh` parameter
+4. `build()` automatically caches after successful build
+
+## Don't Do This
+
+1. ❌ Don't add individual parameters to `__init__` - use config classes
+2. ❌ Don't create backward compatibility support for individual parameters
+3. ❌ Don't skip running tests after changes
+4. ❌ Don't commit files outside experimental/sparkshell/ directory
+5. ❌ Don't use verbose echo/print for communication - output text directly
+6. ❌ Don't make users call setup() or build() manually - start() handles it
+
+## Troubleshooting
+
+### Tests Failing
+1. Check if SBT build succeeded (look for "All tests passed")
+2. Verify JAR exists in expected location
+3. Check if port is already in use
+4. Review test logs for specific error messages
+
+### Build Issues
+1. Ensure build.sbt and build/sbt exist
+2. Check SBT timeout settings in OpConfig
+3. Verify source directory structure is correct
+4. Clear cache: `rm -rf ~/.sparkshell_cache/` and retry
+
+### Caching Issues
+1. Use `force_refresh=True` to bypass cache
+2. Check cache directory permissions: `~/.sparkshell_cache/`
+3. Verify hash computation is consistent for same source
+
+## Future Enhancement Guidelines
+
+When adding new features:
+1. Add configuration to appropriate config class (UC/Op/Spark)
+2. Update docstrings with new parameters
+3. Add tests to verify new functionality
+4. Update example file to demonstrate usage
+5. Run full test suite before committing
+6. Consider caching implications for performance
+
+## Priority Order
+1. Correctness (all tests must pass)
+2. User experience (minimize steps, automatic behavior)
+3. Performance (caching, efficient builds)
+4. Code clarity (clear structure, good docs)

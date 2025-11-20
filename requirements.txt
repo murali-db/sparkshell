@@ -1,0 +1,7 @@
+# Python dependencies for SparkApp client and tests
+
+# Required for the client
+requests>=2.31.0
+
+# Required for testing
+pytest>=7.4.0
