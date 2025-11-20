@@ -45,6 +45,7 @@ class JsonSerializationSpec extends AnyFlatSpec with Matchers {
   "ServerInfo" should "serialize correctly" in {
     val info = ServerInfo(
       sparkVersion = "4.0.0",
+      deltaVersion = "3.4.0",
       port = "8080",
       endpoints = EndpointsInfo(
         health = "GET /health",
@@ -56,6 +57,7 @@ class JsonSerializationSpec extends AnyFlatSpec with Matchers {
     val json = gson.toJson(info)
 
     json should include("\"sparkVersion\":\"4.0.0\"")
+    json should include("\"deltaVersion\":\"3.4.0\"")
     json should include("\"port\":\"8080\"")
     json should include("\"health\":\"GET /health\"")
     json should include("\"execute\":\"POST /sql\"")

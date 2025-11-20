@@ -616,8 +616,13 @@ class SparkShell:
         self._build_delta(delta_dir)
         delta_version = self._get_delta_version(delta_dir)
 
-        if self.op_config.verbose:
-            print(f"[SparkShell] Delta version: {delta_version}")
+        # Always print version information (not just in verbose mode)
+        print(f"[SparkShell] ========================================")
+        print(f"[SparkShell] Build Configuration:")
+        print(f"[SparkShell]   Spark:  4.0.0")
+        print(f"[SparkShell]   Delta:  {delta_version} (built from {self.delta_config.source_branch})")
+        print(f"[SparkShell]   ANTLR:  4.13.1 (via Spark Master)")
+        print(f"[SparkShell] ========================================")
 
         print("[SparkShell] Building SparkShell assembly JAR...")
         print("[SparkShell] This may take several minutes on first run...")

@@ -72,8 +72,17 @@ class RestApi(sparkSession: SparkSession, port: Int) {
     // Info endpoint
     Spark.get("/info", (req: Request, res: Response) => {
       res.`type`("application/json")
+
+      // Get Delta version
+      val deltaVer = try {
+        io.delta.VERSION
+      } catch {
+        case _: Exception => "unknown"
+      }
+
       val info = ServerInfo(
         sparkVersion = sparkSession.version,
+        deltaVersion = deltaVer,
         port = port.toString,
         endpoints = EndpointsInfo(
           health = "GET /health",
@@ -115,6 +124,7 @@ case class EndpointsInfo(
 
 case class ServerInfo(
   sparkVersion: String,
+  deltaVersion: String,
   port: String,
   endpoints: EndpointsInfo
 )

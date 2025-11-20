@@ -77,16 +77,27 @@ object SparkShellServer {
 
     spark.sparkContext.setLogLevel("WARN")
 
-    println(s"Spark Session initialized: ${spark.version}")
-    println("Delta Lake support enabled")
-    
-    // Check if Unity Catalog is configured
-    if (sparkConfigs.contains("spark.sql.catalog.unity.uri") && 
-        sparkConfigs.contains("spark.sql.catalog.unity.token")) {
-      println(s"Unity Catalog enabled: ${sparkConfigs("spark.sql.catalog.unity.uri")}")
-    } else {
-      println("Unity Catalog available (provide spark.sql.catalog.unity.uri and spark.sql.catalog.unity.token to enable)")
+    // Print version information
+    println("=" * 60)
+    println("Runtime Configuration:")
+    println(s"  Spark:           ${spark.version}")
+
+    // Get Delta Lake version
+    try {
+      val deltaVersion = io.delta.VERSION
+      println(s"  Delta Lake:      $deltaVersion")
+    } catch {
+      case _: Exception => println(s"  Delta Lake:      enabled (version unknown)")
     }
+
+    // Check Unity Catalog
+    if (sparkConfigs.contains("spark.sql.catalog.unity.uri") &&
+        sparkConfigs.contains("spark.sql.catalog.unity.token")) {
+      println(s"  Unity Catalog:   enabled (${sparkConfigs("spark.sql.catalog.unity.uri")})")
+    } else {
+      println(s"  Unity Catalog:   available (not configured)")
+    }
+    println("=" * 60)
 
     // Eagerly initialize Spark internals to avoid lazy loading issues
     try {
