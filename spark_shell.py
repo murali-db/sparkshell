@@ -606,7 +606,20 @@ class SparkShell:
         # Ensure .sbtopts is present in work_dir before building
         self._ensure_sbtopts()
 
-        print("[SparkShell] Building assembly JAR...")
+        # Setup and build Delta from source
+        if self.op_config.verbose:
+            print(f"[SparkShell] Setting up Delta Lake:")
+            print(f"  Repository: {self.delta_config.source_repo}")
+            print(f"  Branch: {self.delta_config.source_branch}")
+
+        delta_dir = self._setup_delta()
+        self._build_delta(delta_dir)
+        delta_version = self._get_delta_version(delta_dir)
+
+        if self.op_config.verbose:
+            print(f"[SparkShell] Delta version: {delta_version}")
+
+        print("[SparkShell] Building SparkShell assembly JAR...")
         print("[SparkShell] This may take several minutes on first run...")
 
         sbt_script = self.work_dir / "build" / "sbt"
@@ -616,6 +629,12 @@ class SparkShell:
         # Make sbt executable
         os.chmod(sbt_script, 0o755)
 
+        # Create environment variables for SBT
+        build_env = {
+            "DELTA_VERSION": delta_version,
+            "DELTA_USE_LOCAL": "true"
+        }
+
         try:
             # Run sbt assembly - always show output so users see build progress
             result = self._run_command(
@@ -623,7 +642,8 @@ class SparkShell:
                 cwd=self.work_dir,
                 timeout=self.op_config.build_timeout,
                 check=True,
-                force_output=True
+                force_output=True,
+                env=build_env
             )
 
             # Find the JAR file
@@ -640,7 +660,19 @@ class SparkShell:
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"Build timeout after {self.op_config.build_timeout} seconds")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Build failed: {str(e)}")
+            error_msg = str(e)
+            if "delta-spark" in error_msg or "io.delta" in error_msg:
+                raise RuntimeError(
+                    f"SparkShell build failed: Could not resolve Delta Lake dependency\n"
+                    f"Delta version: {delta_version}\n"
+                    f"This could mean:\n"
+                    f"  1. Delta publishLocal did not complete successfully\n"
+                    f"  2. Maven local repository is corrupted\n"
+                    f"  3. Incompatible Delta version specified\n"
+                    f"Try: rm -rf ~/.m2/repository/io/delta and rebuild with force_refresh=True"
+                )
+            else:
+                raise RuntimeError(f"SparkShell build failed: {error_msg}")
     
     def start(self, force_refresh: bool = False):
         """
@@ -665,9 +697,12 @@ class SparkShell:
         
         # Start the server process
         log_file = self.work_dir / "sparkshell.log"
-        
+
         # Build command with port and optional Spark configs
-        cmd = ["java", "-jar", str(self.jar_path), str(self.port)]
+        # Use Java 17 for Spark 4.0 compatibility
+        java_home = os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk-amd64")
+        java_cmd = os.path.join(java_home, "bin", "java")
+        cmd = [java_cmd, "-jar", str(self.jar_path), str(self.port)]
 
         # Add Spark configurations as key=value arguments
         if self.spark_config.configs:
