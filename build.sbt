@@ -72,9 +72,6 @@ libraryDependencies ++= Seq(
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% "delta-spark" % deltaVersion,
 
-  // ANTLR - Force version 4.9.3 to match Delta's parser compilation
-  "org.antlr" % "antlr4-runtime" % "4.9.3" force(),
-
   // Unity Catalog
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
 

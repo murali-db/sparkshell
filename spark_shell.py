@@ -351,7 +351,7 @@ class SparkShell:
 
         try:
             self._run_command(
-                [str(sbt_script), "publishLocal"],
+                [str(sbt_script), "-DsparkVersion=master", "publishLocal"],
                 cwd=delta_dir,
                 timeout=delta_timeout,
                 check=True,
