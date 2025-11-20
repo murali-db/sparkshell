@@ -272,7 +272,7 @@ class SparkShell:
 
         print(f"[SparkShell] Build cached successfully")
 
-    def _run_command(self, cmd, cwd=None, timeout=None, check=True, force_output=False):
+    def _run_command(self, cmd, cwd=None, timeout=None, check=True, force_output=False, env=None):
         """
         Run a command with optional verbose output.
 
@@ -282,10 +282,18 @@ class SparkShell:
             timeout: Timeout in seconds
             check: Raise exception on non-zero exit code
             force_output: If True, stream output even when verbose=False
+            env: Environment variables to pass (dict)
 
         Returns:
             subprocess.CompletedProcess
         """
+        # Build environment
+        command_env = os.environ.copy()
+        if env:
+            command_env.update(env)
+            if self.op_config.verbose:
+                print(f"[SparkShell] Environment variables: {env}")
+
         if self.op_config.verbose:
             print(f"[SparkShell] Running: {' '.join(cmd)}")
 
@@ -295,7 +303,8 @@ class SparkShell:
                 cmd,
                 cwd=cwd,
                 timeout=timeout,
-                text=True
+                text=True,
+                env=command_env
             )
             if check and result.returncode != 0:
                 raise subprocess.CalledProcessError(result.returncode, cmd)
@@ -308,7 +317,8 @@ class SparkShell:
                 timeout=timeout,
                 check=check,
                 capture_output=True,
-                text=True
+                text=True,
+                env=command_env
             )
 
     def __enter__(self):
