@@ -272,6 +272,130 @@ class SparkShell:
 
         print(f"[SparkShell] Build cached successfully")
 
+    def _setup_delta(self) -> Path:
+        """
+        Clone Delta repository and checkout specified branch.
+
+        Returns:
+            Path to Delta directory
+        """
+        delta_dir = self.work_dir / "delta"
+
+        if delta_dir.exists():
+            if self.op_config.verbose:
+                print(f"[SparkShell] Delta directory already exists: {delta_dir}")
+            return delta_dir
+
+        print(f"[SparkShell] Cloning Delta from {self.delta_config.source_repo}...")
+
+        try:
+            self._run_command(
+                ["git", "clone", self.delta_config.source_repo, "delta"],
+                cwd=self.work_dir,
+                timeout=300,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to clone Delta repository from {self.delta_config.source_repo}\n"
+                f"Error: {e}\n"
+                f"Please check that the repository URL is correct and accessible."
+            )
+
+        print(f"[SparkShell] Checking out branch: {self.delta_config.source_branch}")
+
+        try:
+            self._run_command(
+                ["git", "checkout", self.delta_config.source_branch],
+                cwd=delta_dir,
+                timeout=30,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to checkout branch '{self.delta_config.source_branch}'\n"
+                f"Error: {e}\n"
+                f"Please verify the branch exists in the repository."
+            )
+
+        # Verify build.sbt exists
+        if not (delta_dir / "build.sbt").exists():
+            raise RuntimeError(
+                f"Delta repository does not contain build.sbt\n"
+                f"Directory: {delta_dir}\n"
+                f"This may not be a valid Delta Lake repository."
+            )
+
+        print(f"[SparkShell] Delta repository ready: {delta_dir}")
+        return delta_dir
+
+    def _build_delta(self, delta_dir: Path):
+        """
+        Build Delta Lake and publish to local Maven repository.
+
+        Args:
+            delta_dir: Path to Delta repository
+        """
+        print("[SparkShell] Building Delta Lake from source...")
+        print("[SparkShell] This may take 10+ minutes on first run...")
+
+        sbt_script = delta_dir / "build" / "sbt"
+        if not sbt_script.exists():
+            raise FileNotFoundError(f"Delta SBT script not found: {sbt_script}")
+
+        # Make sbt executable
+        os.chmod(sbt_script, 0o755)
+
+        # Build timeout is 2x normal (Delta builds are slow)
+        delta_timeout = self.op_config.build_timeout * 2
+
+        try:
+            self._run_command(
+                [str(sbt_script), "publishLocal"],
+                cwd=delta_dir,
+                timeout=delta_timeout,
+                check=True,
+                force_output=True
+            )
+            print("[SparkShell] Delta Lake build complete")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Delta build timeout after {delta_timeout} seconds\n"
+                f"Delta builds can take 10+ minutes. Consider increasing build_timeout in OpConfig."
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Delta Lake build failed\n"
+                f"This could be due to:\n"
+                f"  1. Build errors in Delta Lake code\n"
+                f"  2. Missing dependencies\n"
+                f"  3. Incompatible Scala/JVM version\n"
+                f"Check the build output above for details."
+            )
+
+    def _get_delta_version(self, delta_dir: Path) -> str:
+        """
+        Extract Delta version from version.sbt or use snapshot.
+
+        Args:
+            delta_dir: Path to Delta repository
+
+        Returns:
+            Delta version string
+        """
+        version_file = delta_dir / "version.sbt"
+
+        if version_file.exists():
+            content = version_file.read_text()
+            # Parse: version := "3.2.0"
+            import re
+            match = re.search(r'version\s*:=\s*"([^"]+)"', content)
+            if match:
+                return match.group(1)
+
+        # Default to snapshot version
+        return "0.0.0-SNAPSHOT"
+
     def _run_command(self, cmd, cwd=None, timeout=None, check=True, force_output=False, env=None):
         """
         Run a command with optional verbose output.
