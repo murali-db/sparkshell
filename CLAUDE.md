@@ -138,102 +138,99 @@ This code was originally developed by **Tathagata Das (TD)** in the Delta Lake r
 ✅ **Automatic building**: SBT assembly with caching
 ✅ **Unity Catalog**: Full OSS Spark integration
 ✅ **Delta Lake**: ACID operations from OSS
+✅ **Configurable Delta**: Point to any Delta repo/branch
 ✅ **Cloud storage**: S3, Azure, GCS support
 ✅ **Context manager**: Automatic lifecycle
-✅ **Comprehensive tests**: 13+ Python tests, Scala unit tests
+✅ **Comprehensive tests**: 20+ Python tests, Scala unit tests
 ✅ **Documentation**: README, SPARK_SHELL.md, .claude_instructions
 
-### Current Dependencies
+### DeltaConfig Support
 
-From `build.sbt`:
-```scala
-libraryDependencies ++= Seq(
-  "io.delta" %% "delta-spark" % "3.0.0",  // ← Hardcoded version
-  "io.unitycatalog" % "unitycatalog-spark" % "0.1.0",
-  "org.apache.spark" %% "spark-sql" % "3.5.0",
-  // ... cloud storage connectors
-)
-```
+✅ **Build from GitHub**: Clone and build Delta from any repository/branch
+✅ **Cache isolation**: Different Delta configs use separate caches
+✅ **Version extraction**: Automatic Delta version detection from version.sbt
+✅ **Local Maven publishing**: Delta built and published to ~/.m2/repository/
+✅ **Environment variables**: DELTA_VERSION and DELTA_USE_LOCAL passed to SBT
 
-### Limitations
-
-❌ **Delta version is hardcoded**: Must use 3.0.0
-❌ **Cannot point to custom Delta builds**: No source repo support
-❌ **Cannot test Delta branches**: No flexibility for development
-
-## Next Steps: Configurable Delta Dependency
-
-### Goal
-
-Add `DeltaConfig` to point SparkShell to specific Delta repositories/versions:
-
+Example:
 ```python
-from spark_shell import SparkShell, UCConfig, DeltaConfig
+from spark_shell import SparkShell, DeltaConfig
 
-# Option 1: Specific Maven version
-delta_config = DeltaConfig(version="3.1.0")
-
-# Option 2: Build from Delta repo/branch
 delta_config = DeltaConfig(
     source_repo="https://github.com/tdas/delta",
     source_branch="oss-in-dbr"
 )
 
-# Option 3: Use local Delta repo
-delta_config = DeltaConfig(source_path="/home/murali/delta")
-
-with SparkShell(
-    source=".",
-    uc_config=uc_config,
-    delta_config=delta_config
-) as shell:
-    result = shell.execute_sql("SELECT 1")
+with SparkShell(source=".", delta_config=delta_config) as shell:
+    result = shell.execute_sql("SELECT * FROM my_table")
 ```
 
-### Implementation Plan
+### Build Time Expectations
 
-**1. Add DeltaConfig dataclass** (`spark_shell.py`)
+- **First run**: 10-15 minutes (Delta build + SparkShell build)
+- **Cached run**: 1-2 minutes (uses cached Delta + SparkShell)
+- **Different Delta branch**: New full build required
+- **Same Delta branch**: Uses cache
+
+## ✅ Completed: Configurable Delta Dependency
+
+DeltaConfig has been successfully implemented! SparkShell can now build against custom Delta Lake repositories and branches.
+
+### Implementation Summary
+
+**DeltaConfig dataclass** (`spark_shell.py`)
 ```python
 @dataclass
 class DeltaConfig:
     """Delta Lake dependency configuration."""
-    # Maven-based (default)
-    version: str = "3.0.0"
-    maven_repo: Optional[str] = None
-
-    # Source-based (optional)
-    source_repo: Optional[str] = None  # GitHub URL
-    source_branch: str = "master"       # Branch name
-    source_path: Optional[str] = None   # Local path
+    source_repo: str                    # GitHub URL (required)
+    source_branch: str = "master"       # Branch name (default: master)
 ```
 
-**2. Update SparkShell class**
-- Add `delta_config` parameter to `__init__`
-- Implement `_setup_delta_from_source()` method
-- Modify `build()` to handle Delta source builds
-- Update cache keys to include Delta config
+**Features Implemented:**
+- ✅ Clone Delta from any GitHub repository
+- ✅ Checkout specific branch
+- ✅ Build Delta with `publishLocal`
+- ✅ Extract Delta version from `version.sbt`
+- ✅ Pass DELTA_VERSION and DELTA_USE_LOCAL to SBT
+- ✅ Cache isolation per Delta configuration
+- ✅ Comprehensive error handling
+- ✅ Unit tests + integration tests
 
-**3. Make build.sbt configurable**
-```scala
-val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "3.0.0")
-libraryDependencies += "io.delta" %% "delta-spark" % deltaVersion
+**Files Modified:**
+- `spark_shell.py`: Added DeltaConfig, _setup_delta(), _build_delta(), _get_delta_version()
+- `build.sbt`: Environment variable support for Delta version
+- `tests/`: 20+ tests covering unit and integration scenarios
+
+### Usage
+
+```python
+from spark_shell import SparkShell, DeltaConfig
+
+# Build from TD's oss-in-dbr branch
+delta_config = DeltaConfig(
+    source_repo="https://github.com/tdas/delta",
+    source_branch="oss-in-dbr"
+)
+
+with SparkShell(source=".", delta_config=delta_config) as shell:
+    # Execute Delta operations
+    shell.execute_sql("CREATE TABLE test (id INT) USING DELTA")
+    shell.execute_sql("INSERT INTO test VALUES (1), (2), (3)")
+    shell.execute_sql("UPDATE test SET id = 10 WHERE id = 1")
+    result = shell.execute_sql("SELECT * FROM test")
 ```
 
-**4. Build Delta from source when needed**
-- Clone Delta repo to work_dir/delta
-- Run `build/sbt publishLocal` in Delta directory
-- Update resolvers in build.sbt to use local Maven
+### Stacked PR Implementation
 
-**5. Update cache system**
-- Include Delta config in cache key hash
-- Separate caches for different Delta versions/sources
-- Prevent cache collisions
+DeltaConfig was implemented through 4 stacked PRs:
 
-**6. Add tests**
-- Test Maven version configuration
-- Test source repo builds
-- Test local path support
-- Verify cache isolation
+1. **PR #1: Foundation** - DeltaConfig class + cache isolation
+2. **PR #2: Environment vars** - SBT environment variable support
+3. **PR #3: Build methods** - Delta clone/build implementation
+4. **PR #4: Integration** - Wire everything together + integration test
+
+Each PR includes comprehensive unit tests and documentation.
 
 ### Why This Matters
 
@@ -312,9 +309,9 @@ See `.claude_instructions` for detailed development guidelines.
 SparkShell aims to be the **de facto tool for OSS Spark + Databricks Unity Catalog integration**.
 
 **Short term**:
-- ✅ Standalone repository (this step!)
-- 🔄 Configurable Delta dependency (next)
-- 🔄 Published PyPI package
+- ✅ Standalone repository
+- ✅ Configurable Delta dependency (DeltaConfig)
+- 🔄 Published PyPI package (next)
 - 🔄 Docker image for portability
 
 **Medium term**:

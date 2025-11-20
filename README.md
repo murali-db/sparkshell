@@ -322,6 +322,42 @@ with SparkShell(source=".", uc_uri="http://localhost:8081", uc_token="token") as
     print(result)
 ```
 
+#### Configuring Delta Lake
+
+SparkShell can build against specific Delta Lake repositories and branches using `DeltaConfig`:
+
+```python
+from spark_shell import SparkShell, DeltaConfig
+
+# Build from TD's oss-in-dbr branch
+delta_config = DeltaConfig(
+    source_repo="https://github.com/tdas/delta",
+    source_branch="oss-in-dbr"
+)
+
+with SparkShell(source=".", delta_config=delta_config) as shell:
+    # Execute Delta operations with the custom Delta build
+    shell.execute_sql("CREATE TABLE test (id INT, name STRING) USING DELTA")
+    shell.execute_sql("INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob')")
+    shell.execute_sql("UPDATE test SET name = 'ALICE' WHERE id = 1")
+    result = shell.execute_sql("SELECT * FROM test")
+    print(result)
+```
+
+**Build Time:**
+- First run: 10-15 minutes (Delta build + SparkShell build)
+- Cached run: 1-2 minutes (uses cached builds)
+- Different Delta branch: New full build required
+
+**Default Configuration:**
+If no `delta_config` is provided, SparkShell uses:
+```python
+DeltaConfig(
+    source_repo="https://github.com/delta-io/delta",
+    source_branch="master"
+)
+```
+
 #### Configuring Cloud Storage
 
 SparkShell includes built-in support for cloud storage (S3, Azure, GCS). Configure access via Spark configurations:
