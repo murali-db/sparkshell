@@ -4,6 +4,19 @@ version := "0.1.0"
 
 scalaVersion := "2.13.15"
 
+// Read Delta configuration from environment
+val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
+val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
+
+// Add Maven local resolver for Delta built from source
+resolvers ++= (if (deltaUseLocal) {
+  println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
+  Seq(Resolver.mavenLocal)
+} else {
+  println(s"[SparkShell] Using Delta Lake from Maven Central (version: $deltaVersion)")
+  Seq()
+})
+
 // Main class for easy running
 Compile / mainClass := Some("com.sparkshell.SparkShellServer")
 assembly / mainClass := Some("com.sparkshell.SparkShellServer")
@@ -55,10 +68,10 @@ javaOptions ++= Seq(
 libraryDependencies ++= Seq(
   // Spark
   "org.apache.spark" %% "spark-sql" % "4.0.0",
-  
-  // Delta Lake
-  "io.delta" %% "delta-spark" % "4.0.0",
-  
+
+  // Delta Lake - version configurable via DELTA_VERSION environment variable
+  "io.delta" %% "delta-spark" % deltaVersion,
+
   // Unity Catalog
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
   
