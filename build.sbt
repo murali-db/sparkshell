@@ -72,19 +72,22 @@ libraryDependencies ++= Seq(
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% "delta-spark" % deltaVersion,
 
+  // ANTLR - Force version 4.9.3 to match Delta's parser compilation
+  "org.antlr" % "antlr4-runtime" % "4.9.3" force(),
+
   // Unity Catalog
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
-  
+
   // Cloud Storage Support (S3, ADLS, GCS)
   "org.apache.hadoop" % "hadoop-aws" % "3.4.0",
   "org.apache.hadoop" % "hadoop-azure" % "3.4.0",
   "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.22",
   "com.amazonaws" % "aws-java-sdk-bundle" % "1.12.262",
-  
+
   // REST API
   "com.sparkjava" % "spark-core" % "2.9.4",
   "com.google.code.gson" % "gson" % "2.10.1",
-  
+
   // Testing
   "org.scalatest" %% "scalatest" % "3.2.17" % Test
 )

@@ -697,9 +697,12 @@ class SparkShell:
         
         # Start the server process
         log_file = self.work_dir / "sparkshell.log"
-        
+
         # Build command with port and optional Spark configs
-        cmd = ["java", "-jar", str(self.jar_path), str(self.port)]
+        # Use Java 17 for Spark 4.0 compatibility
+        java_home = os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk-amd64")
+        java_cmd = os.path.join(java_home, "bin", "java")
+        cmd = [java_cmd, "-jar", str(self.jar_path), str(self.port)]
 
         # Add Spark configurations as key=value arguments
         if self.spark_config.configs:
