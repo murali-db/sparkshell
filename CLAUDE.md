@@ -194,13 +194,15 @@ class DeltaConfig:
 - ✅ Extract Delta version from `version.sbt`
 - ✅ Pass DELTA_VERSION and DELTA_USE_LOCAL to SBT
 - ✅ Cache isolation per Delta configuration
+- ✅ Java 17 compatibility for Spark 4.0
+- ✅ ANTLR 4.9.3 version pinning for Delta parser
 - ✅ Comprehensive error handling
-- ✅ Unit tests + integration tests
+- ✅ Unit tests + integration tests (21 total tests)
 
 **Files Modified:**
-- `spark_shell.py`: Added DeltaConfig, _setup_delta(), _build_delta(), _get_delta_version()
-- `build.sbt`: Environment variable support for Delta version
-- `tests/`: 20+ tests covering unit and integration scenarios
+- `spark_shell.py`: Added DeltaConfig, _setup_delta(), _build_delta(), _get_delta_version(), Java 17 support
+- `build.sbt`: Environment variable support + ANTLR 4.9.3 pinning
+- `tests/`: 21 tests (13 unit + 8 integration)
 
 ### Usage
 

@@ -349,6 +349,10 @@ with SparkShell(source=".", delta_config=delta_config) as shell:
 - Cached run: 1-2 minutes (uses cached builds)
 - Different Delta branch: New full build required
 
+**Requirements:**
+- Java 17 (automatically used for Spark 4.0 compatibility)
+- ANTLR 4.9.3 (automatically pinned for Delta parser compatibility)
+
 **Default Configuration:**
 If no `delta_config` is provided, SparkShell uses:
 ```python
