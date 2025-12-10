@@ -75,10 +75,11 @@ libraryDependencies ++= Seq(
   // Unity Catalog
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
 
-  // Cloud Storage Support (S3, ADLS, GCS)
+  // Cloud Storage Support (S3, ADLS)
+  // Note: GCS connector removed due to protobuf version conflict
   "org.apache.hadoop" % "hadoop-aws" % "3.4.0",
   "org.apache.hadoop" % "hadoop-azure" % "3.4.0",
-  "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.22",
+  // "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.22",
   "com.amazonaws" % "aws-java-sdk-bundle" % "1.12.262",
 
   // REST API
