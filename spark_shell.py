@@ -63,6 +63,8 @@ def fgac_log(component: str, message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     with open(FGAC_DEBUG_LOG, "a") as f:
         f.write(f"[{timestamp}] [{component}] {message}\n")
+        f.flush()
+        os.fsync(f.fileno())  # Force write to disk
 
 
 @dataclass
