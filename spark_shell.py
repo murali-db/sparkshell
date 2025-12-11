@@ -53,6 +53,16 @@ import hashlib
 from pathlib import Path
 from typing import Optional, Union, Tuple
 from dataclasses import dataclass, field
+from datetime import datetime
+
+# Shared debug log file - same as Delta's FGACDebugLog.scala
+FGAC_DEBUG_LOG = "/tmp/fgac_debug.log"
+
+def fgac_log(component: str, message: str):
+    """Write debug message to shared FGAC debug log file."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    with open(FGAC_DEBUG_LOG, "a") as f:
+        f.write(f"[{timestamp}] [{component}] {message}\n")
 
 
 @dataclass
@@ -695,7 +705,10 @@ class SparkShell:
             self.build(force_refresh=force_refresh)
 
         print(f"[SparkShell] Starting server on port {self.port}...")
-        
+        fgac_log("SparkShell.start", f"Starting server on port {self.port}")
+        fgac_log("SparkShell.start", f"JAR path: {self.jar_path}")
+        fgac_log("SparkShell.start", f"Work dir: {self.work_dir}")
+
         # Check if port is already in use
         if self._is_port_in_use():
             raise RuntimeError(f"Port {self.port} is already in use")
@@ -830,6 +843,8 @@ class SparkShell:
         if not self.is_ready:
             raise RuntimeError("Server is not ready. Call start() first.")
 
+        fgac_log("SparkShell.execute_sql", f"Executing SQL: {sql[:100]}...")
+
         try:
             response = requests.post(
                 f"{self.base_url}/sql",
@@ -837,6 +852,7 @@ class SparkShell:
                 json={"sql": sql},
                 timeout=300  # 5 minutes timeout for long queries
             )
+            fgac_log("SparkShell.execute_sql", f"Response status: {response.status_code}")
 
             if response.status_code != 200:
                 self._print_spark_logs_on_error()
