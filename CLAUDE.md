@@ -306,6 +306,137 @@ Follow the patterns established by TD:
 
 See `.claude_instructions` for detailed development guidelines.
 
+## 🔄 In Progress: FGAC (Fine-Grained Access Control) Support
+
+### Goal
+Enable OSS Spark to read tables with FGAC policies (column masking, row-level security) from Databricks Unity Catalog.
+
+### How It Works
+1. UC's new `MATERIALIZED_JSON` mode returns **presigned HTTPS URLs** pointing to JSON data
+2. FGAC policies are applied server-side before data is returned
+3. Client just fetches JSON from presigned URLs - no raw credentials needed
+
+### Delta Branch
+**Repository**: `https://github.com/murali-db/delta`
+**Branch**: `server-side-planning-D-credentials-injection`
+
+### Implementation Status - ALL CODE CHANGES COMPLETE
+
+**All commits pushed and ready for testing:**
+
+**Delta Repo (`murali-db/delta` branch `server-side-planning-D-credentials-injection`):**
+1. `46545999c` - Add PresignedUrlJsonPartitionReader (204 insertions)
+2. `346bf748e` - Fix Scaladoc errors (wrap JSON examples in `{{{...}}}`)
+3. `66c26d792` - Fix duplicate import (remove `scala.jdk.CollectionConverters._`)
+4. `acbf8ed63` - **CRITICAL**: Add `?implementation=MATERIALIZED_JSON` to plan endpoint
+5. `dd067a3d6` - Fix scalastyle line length (split URL string)
+6. `da99aed21` - Add debug prints to trace UC response
+7. `7752af107` - Print full JSON response (not just 500 chars)
+8. `0a0ee5fb0` - **CRITICAL**: Enable Bearer token authentication for plan endpoint
+9. `1e69c5d9f` - **CRITICAL**: Fix Iceberg REST catalog endpoint URL structure
+
+**SparkShell Repo (`murali-db/sparkshell` branch `master`):**
+10. `4e9960a` - Remove GCS connector due to protobuf version conflict
+
+**Features Implemented:**
+- ✅ `PresignedUrlJsonPartitionReader` class in `ServerSidePlannedTable.scala`
+- ✅ Detection logic: `filePath.startsWith("https://")` routes to JSON reader
+- ✅ JSON parsing: array-of-arrays format `[[val1, val2], [val3, val4]]`
+- ✅ Schema-aware conversion: JSON → InternalRow
+- ✅ `?implementation=MATERIALIZED_JSON` query parameter
+- ✅ Bearer token authentication for plan endpoint
+- ✅ Correct URL structure: `/iceberg-rest/v1/catalogs/{catalog}/namespaces/...`
+- ✅ Debug print statements for troubleshooting
+- ✅ GCS connector removed from SparkShell (protobuf conflict fix)
+
+**Key Files Modified in Delta:**
+- `spark/.../serverSidePlanning/ServerSidePlannedTable.scala` - JSON reader + detection + debug prints
+- `spark/.../serverSidePlanning/UnityCatalogMetadata.scala` - Endpoint URL construction (fixed to `/iceberg-rest/v1/catalogs/$catalogName`)
+- `iceberg/.../serverSidePlanning/IcebergRESTCatalogPlanningClient.scala` - Plan request + auth + debug prints
+
+**Endpoint URL Structure (CORRECTED):**
+```
+POST /api/2.1/unity-catalog/iceberg-rest/v1/catalogs/{catalog}/namespaces/{schema}/tables/{table}/plan?implementation=MATERIALIZED_JSON
+```
+
+**Test with curl:**
+```bash
+export UC_TOKEN="<PAT>"
+export UC_HOST="https://e2-dogfood.staging.cloud.databricks.com"
+export CATALOG="main"
+export SCHEMA="default"
+export TABLE="spark_shell_test_table"
+
+curl -X POST \
+  "${UC_HOST}/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/${CATALOG}/namespaces/${SCHEMA}/tables/${TABLE}/plan?implementation=MATERIALIZED_JSON" \
+  -H "Authorization: Bearer ${UC_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"snapshot-id": 0}'
+```
+
+**Debug Output (when running):**
+```
+[DEBUG IcebergRESTCatalogPlanningClient] Raw response (first 1000 chars): ...
+[DEBUG IcebergRESTCatalogPlanningClient] Number of file scan tasks: X
+[DEBUG IcebergRESTCatalogPlanningClient] File path: https://... or s3://...
+[DEBUG PresignedUrlJsonPartitionReader] Fetching URL: https://...
+[DEBUG PresignedUrlJsonPartitionReader] HTTP status: 200
+[DEBUG PresignedUrlJsonPartitionReader] === FULL JSON RESPONSE ===
+...complete JSON data...
+[DEBUG PresignedUrlJsonPartitionReader] === END JSON RESPONSE ===
+```
+
+### Usage
+```python
+from spark_shell import SparkShell, UCConfig, DeltaConfig, OpConfig
+
+uc_config = UCConfig(
+    uri="https://your-workspace.cloud.databricks.com/",
+    token="your-token",
+    catalog="main",
+    schema="default"
+)
+
+delta_config = DeltaConfig(
+    source_repo="https://github.com/murali-db/delta",
+    source_branch="server-side-planning-D-credentials-injection"
+)
+
+# Note: build_timeout=1200 recommended for first build (Delta build takes 15-20 min)
+with SparkShell(source=".", uc_config=uc_config, delta_config=delta_config,
+                op_config=OpConfig(verbose=True, build_timeout=1200)) as shell:
+    # Query FGAC table - masked columns will show masked values!
+    result = shell.execute_sql("SELECT * FROM fgac_table")
+    print(result)
+```
+
+### Critical Bugs Fixed During Implementation
+
+1. **Missing query parameter**: UC defaults to `FULL_TABLE_PARQUET` without `?implementation=MATERIALIZED_JSON`
+2. **Authorization header commented out**: Bearer token was not being sent to plan endpoint
+3. **Wrong URL structure**: Was `/iceberg/v1/namespaces/...`, corrected to `/iceberg-rest/v1/catalogs/{catalog}/namespaces/...`
+4. **GCS connector protobuf conflict**: Removed unused GCS connector that caused Spark session init failure
+5. **Duplicate imports**: `scala.jdk.CollectionConverters` conflicted with `scala.collection.JavaConverters`
+6. **Scaladoc errors**: JSON examples with `[[...]]` confused Scaladoc parser
+
+### Next Steps
+1. Clear Databricks notebook cache and rebuild with latest commits
+2. Test curl command to verify UC returns presigned URLs
+3. Verify JSON format matches expected array-of-arrays structure
+4. End-to-end test with FGAC table
+5. Remove debug print statements once working
+
+### Data Flow
+```
+SELECT * FROM fgac_table → SparkShell → Delta → UC POST /plan?implementation=MATERIALIZED_JSON
+    ↓
+UC decides: Normal table → S3 paths | FGAC table → Presigned HTTPS URLs
+    ↓
+createReader(): if (filePath.startsWith("https://")) → PresignedUrlJsonPartitionReader
+                else → ServerSidePlannedFilePartitionReader (Parquet)
+```
+**Key insight**: User doesn't change SQL - UC decides format based on FGAC policies.
+
 ## Vision
 
 SparkShell aims to be the **de facto tool for OSS Spark + Databricks Unity Catalog integration**.

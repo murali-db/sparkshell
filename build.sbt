@@ -71,6 +71,7 @@ libraryDependencies ++= Seq(
 
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% "delta-spark" % deltaVersion,
+  "io.delta" %% "delta-iceberg" % deltaVersion,
 
   // Unity Catalog
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",

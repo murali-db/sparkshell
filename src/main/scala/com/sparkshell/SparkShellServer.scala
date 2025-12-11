@@ -1,6 +1,10 @@
 package com.sparkshell
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.serverSidePlanning.{
+  ServerSidePlanningClientFactory,
+  IcebergRESTCatalogPlanningClientFactory
+}
 
 
 class SparkShellServer(spark: SparkSession, port: Int) {
@@ -98,6 +102,10 @@ object SparkShellServer {
       println(s"  Unity Catalog:   available (not configured)")
     }
     println("=" * 60)
+
+    // Register server-side planning client factory for FGAC support
+    ServerSidePlanningClientFactory.setFactory(new IcebergRESTCatalogPlanningClientFactory())
+    println("Registered IcebergRESTCatalogPlanningClientFactory for server-side planning")
 
     // Eagerly initialize Spark internals to avoid lazy loading issues
     try {
