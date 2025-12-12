@@ -8,14 +8,30 @@ scalaVersion := "2.13.15"
 val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
 val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
 
-// Add Maven local resolver for Delta built from source
-resolvers ++= (if (deltaUseLocal) {
-  println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
-  Seq(Resolver.mavenLocal)
-} else {
-  println(s"[SparkShell] Using Delta Lake from Maven Central (version: $deltaVersion)")
-  Seq()
-})
+// Read Unity Catalog configuration from environment
+// UC_USE_LOCAL=true: use forked UC from Maven Local (requires building UC first)
+// UC_USE_LOCAL=false (default): use UC from Maven Central (no FGAC support)
+val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
+
+// Add Maven local resolver if using local Delta or UC builds
+resolvers ++= {
+  val needsMavenLocal = deltaUseLocal || ucUseLocal
+
+  if (deltaUseLocal) {
+    println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
+  } else {
+    println(s"[SparkShell] Using Delta Lake from Maven Central (version: $deltaVersion)")
+  }
+
+  if (ucUseLocal) {
+    println(s"[SparkShell] Using local Unity Catalog build (FGAC support enabled)")
+    println(s"[SparkShell] NOTE: Build UC first: cd unitycatalog && ./build/sbt spark/publishM2")
+  } else {
+    println(s"[SparkShell] Using Unity Catalog from Maven Central (no FGAC support)")
+  }
+
+  if (needsMavenLocal) Seq(Resolver.mavenLocal) else Seq.empty
+}
 
 // Main class for easy running
 Compile / mainClass := Some("com.sparkshell.SparkShellServer")
@@ -74,6 +90,8 @@ libraryDependencies ++= Seq(
   "io.delta" %% "delta-iceberg" % deltaVersion,
 
   // Unity Catalog
+  // UC_USE_LOCAL=true: use local build from ~/.m2/repository (FGAC support)
+  // UC_USE_LOCAL=false: use Maven Central version 0.3.0 (no FGAC support)
   "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
 
   // Cloud Storage Support (S3, ADLS)

@@ -141,12 +141,12 @@ def main():
         proc.terminate()
         sys.exit(1)
 
-    # Execute query
+    # Execute query - using FGAC table with row filter + column mask
     try:
-        print(f"\n=== Querying {CATALOG}.{SCHEMA}.test_table_1099 ===")
+        print(f"\n=== Querying {CATALOG}.{SCHEMA}.rls_cm_1211 (FGAC table) ===")
         log_file.write(f"\n=== Query Execution ===\n")
         # Use fully-qualified table name: catalog.schema.table
-        sql = f"SELECT * FROM {CATALOG}.{SCHEMA}.test_table_1099 LIMIT 5"
+        sql = f"SELECT * FROM {CATALOG}.{SCHEMA}.rls_cm_1211 LIMIT 5"
         print(f"SQL: {sql}")
         log_file.write(f"SQL: {sql}\n")
         log_file.flush()
