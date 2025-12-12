@@ -30,13 +30,16 @@ Usage:
     shell.shutdown()
 
     # With configuration classes
-    from spark_shell import SparkShell, UCConfig, OpConfig, SparkConfig
+    from spark_shell import SparkShell, UCConfig, OpConfig, SparkConfig, UnityCatalogSourceConfig
 
     uc_config = UCConfig(uri="http://localhost:8081", token="my-token", catalog="unity", schema="default")
     op_config = OpConfig(verbose=True, startup_timeout=120, cleanup_on_exit=True)
     spark_config = SparkConfig(configs={"spark.executor.memory": "2g"})
+    # Use FGAC-enabled UC fork (default settings)
+    uc_source_config = UnityCatalogSourceConfig()
 
-    with SparkShell(source=".", uc_config=uc_config, op_config=op_config, spark_config=spark_config) as shell:
+    with SparkShell(source=".", uc_config=uc_config, op_config=op_config,
+                    spark_config=spark_config, uc_source_config=uc_source_config) as shell:
         result = shell.execute_sql("SELECT * FROM my_table")
         print(result)
 """
@@ -110,6 +113,24 @@ class DeltaConfig:
         return f"delta_{self.source_repo}_{self.source_branch}"
 
 
+@dataclass
+class UnityCatalogSourceConfig:
+    """Unity Catalog source configuration for building from a fork with FGAC support."""
+    source_repo: str = "https://github.com/murali-db/unitycatalog"
+    source_branch: str = "fgac-fix"
+
+    def __post_init__(self):
+        """Validate configuration."""
+        if not self.source_repo.startswith("http"):
+            raise ValueError(
+                f"source_repo must be a URL (starting with 'http'), got: {self.source_repo}"
+            )
+
+    def get_cache_key_component(self) -> str:
+        """Get a unique string for cache key computation."""
+        return f"uc_{self.source_repo}_{self.source_branch}"
+
+
 class SparkShell:
     """
     A standalone class to manage SparkApp server lifecycle and SQL execution.
@@ -130,7 +151,8 @@ class SparkShell:
         uc_config: Optional[UCConfig] = None,
         op_config: Optional[OpConfig] = None,
         spark_config: Optional[SparkConfig] = None,
-        delta_config: Optional[DeltaConfig] = None
+        delta_config: Optional[DeltaConfig] = None,
+        uc_source_config: Optional[UnityCatalogSourceConfig] = None
     ):
         """
         Initialize SparkShell.
@@ -143,6 +165,7 @@ class SparkShell:
             op_config: Operational configuration (OpConfig object)
             spark_config: Spark configuration (SparkConfig object)
             delta_config: Delta Lake configuration (DeltaConfig object)
+            uc_source_config: Unity Catalog source config for FGAC support (UnityCatalogSourceConfig object)
         """
         self.source = source
         self.port = port
@@ -156,6 +179,8 @@ class SparkShell:
             source_repo="https://github.com/delta-io/delta",
             source_branch="master"
         )
+        # UC source config - defaults to FGAC-enabled fork
+        self.uc_source_config = uc_source_config or UnityCatalogSourceConfig()
 
         # Configure Unity Catalog if URI and token are provided
         if self.uc_config.uri and self.uc_config.token:
@@ -179,11 +204,12 @@ class SparkShell:
         Compute a hash of the source to use as cache key.
         For local paths, hash the absolute path.
         For URLs, hash the URL itself.
-        Includes Delta configuration to prevent cache collision.
+        Includes Delta and UC configuration to prevent cache collision.
         """
         source_str = str(Path(self.source).resolve()) if not self.source.startswith("http") else self.source
         delta_str = self.delta_config.get_cache_key_component()
-        combined = f"{source_str}_{delta_str}"
+        uc_str = self.uc_source_config.get_cache_key_component()
+        combined = f"{source_str}_{delta_str}_{uc_str}"
         source_hash = hashlib.sha256(combined.encode()).hexdigest()[:16]
 
         if self.op_config.verbose:
@@ -191,6 +217,7 @@ class SparkShell:
             print(f"  Source: {self.source}")
             print(f"  Normalized: {source_str}")
             print(f"  Delta config: {delta_str}")
+            print(f"  UC config: {uc_str}")
             print(f"  Combined: {combined}")
             print(f"  Cache key (hash): {source_hash}")
 
@@ -407,6 +434,107 @@ class SparkShell:
 
         # Default to snapshot version
         return "0.0.0-SNAPSHOT"
+
+    def _setup_uc(self) -> Path:
+        """
+        Clone Unity Catalog repository and checkout specified branch.
+
+        Returns:
+            Path to Unity Catalog directory
+        """
+        uc_dir = self.work_dir / "unitycatalog"
+
+        if uc_dir.exists():
+            if self.op_config.verbose:
+                print(f"[SparkShell] Unity Catalog directory already exists: {uc_dir}")
+            return uc_dir
+
+        print(f"[SparkShell] Cloning Unity Catalog from {self.uc_source_config.source_repo}...")
+
+        try:
+            self._run_command(
+                ["git", "clone", self.uc_source_config.source_repo, "unitycatalog"],
+                cwd=self.work_dir,
+                timeout=300,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to clone Unity Catalog repository from {self.uc_source_config.source_repo}\n"
+                f"Error: {e}\n"
+                f"Please check that the repository URL is correct and accessible."
+            )
+
+        print(f"[SparkShell] Checking out branch: {self.uc_source_config.source_branch}")
+
+        try:
+            self._run_command(
+                ["git", "checkout", self.uc_source_config.source_branch],
+                cwd=uc_dir,
+                timeout=30,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to checkout branch '{self.uc_source_config.source_branch}'\n"
+                f"Error: {e}\n"
+                f"Please verify the branch exists in the repository."
+            )
+
+        # Verify build.sbt exists
+        if not (uc_dir / "build.sbt").exists():
+            raise RuntimeError(
+                f"Unity Catalog repository does not contain build.sbt\n"
+                f"Directory: {uc_dir}\n"
+                f"This may not be a valid Unity Catalog repository."
+            )
+
+        print(f"[SparkShell] Unity Catalog repository ready: {uc_dir}")
+        return uc_dir
+
+    def _build_uc(self, uc_dir: Path):
+        """
+        Build Unity Catalog Spark connector and publish to local Maven repository.
+
+        Args:
+            uc_dir: Path to Unity Catalog repository
+        """
+        print("[SparkShell] Building Unity Catalog Spark connector from source...")
+        print("[SparkShell] This may take a few minutes on first run...")
+
+        sbt_script = uc_dir / "build" / "sbt"
+        if not sbt_script.exists():
+            raise FileNotFoundError(f"Unity Catalog SBT script not found: {sbt_script}")
+
+        # Make sbt executable
+        os.chmod(sbt_script, 0o755)
+
+        # UC build timeout
+        uc_timeout = self.op_config.build_timeout
+
+        try:
+            self._run_command(
+                [str(sbt_script), "spark/publishM2"],
+                cwd=uc_dir,
+                timeout=uc_timeout,
+                check=True,
+                force_output=True
+            )
+            print("[SparkShell] Unity Catalog build complete")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Unity Catalog build timeout after {uc_timeout} seconds\n"
+                f"Consider increasing build_timeout in OpConfig."
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Unity Catalog build failed\n"
+                f"This could be due to:\n"
+                f"  1. Build errors in Unity Catalog code\n"
+                f"  2. Missing dependencies\n"
+                f"  3. Incompatible Scala/JVM version (requires Java 17)\n"
+                f"Check the build output above for details."
+            )
 
     def _run_command(self, cmd, cwd=None, timeout=None, check=True, force_output=False, env=None):
         """
@@ -628,11 +756,21 @@ class SparkShell:
         self._build_delta(delta_dir)
         delta_version = self._get_delta_version(delta_dir)
 
+        # Setup and build Unity Catalog from source (for FGAC support)
+        if self.op_config.verbose:
+            print(f"[SparkShell] Setting up Unity Catalog:")
+            print(f"  Repository: {self.uc_source_config.source_repo}")
+            print(f"  Branch: {self.uc_source_config.source_branch}")
+
+        uc_dir = self._setup_uc()
+        self._build_uc(uc_dir)
+
         # Always print version information (not just in verbose mode)
         print(f"[SparkShell] ========================================")
         print(f"[SparkShell] Build Configuration:")
         print(f"[SparkShell]   Spark:  4.0.0")
         print(f"[SparkShell]   Delta:  {delta_version} (built from {self.delta_config.source_branch})")
+        print(f"[SparkShell]   UC:     0.3.0 (built from {self.uc_source_config.source_branch})")
         print(f"[SparkShell]   ANTLR:  4.13.1 (via Spark Master)")
         print(f"[SparkShell] ========================================")
 
@@ -649,7 +787,8 @@ class SparkShell:
         # Create environment variables for SBT
         build_env = {
             "DELTA_VERSION": delta_version,
-            "DELTA_USE_LOCAL": "true"
+            "DELTA_USE_LOCAL": "true",
+            "UC_USE_LOCAL": "true"
         }
 
         try:
