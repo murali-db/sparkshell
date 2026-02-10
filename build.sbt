@@ -19,12 +19,11 @@ val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVe
 val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
 val ucVersion = if (ucUseLocal) "0.3.0-SNAPSHOT" else "0.3.0"
 
-// When using local Delta or UC: include local resolvers so snapshots are available.
-// Delta uses publishM2 → ~/.m2 (Maven local)
-// UC client uses publishLocal → ~/.ivy2 (Ivy local) to avoid javadoc issues
-// Keep them after normal repositories to avoid shadowing stable transitive dependencies.
-val needsLocalResolvers = deltaUseLocal || ucUseLocal
-resolvers := resolvers.value ++ (if (needsLocalResolvers) Seq(Resolver.defaultLocal, Resolver.mavenLocal) else Seq.empty)
+// When using local Delta or UC: include Maven local so ~/.m2 snapshots are available.
+// Both Delta and UC publish to ~/.m2 via publishM2.
+// Keep it after normal repositories to avoid shadowing stable transitive dependencies.
+val needsMavenLocal = deltaUseLocal || ucUseLocal
+resolvers := resolvers.value ++ (if (needsMavenLocal) Seq(Resolver.mavenLocal) else Seq.empty)
 
 // Main class for easy running
 Compile / mainClass := Some("com.sparkshell.SparkShellServer")
