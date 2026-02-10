@@ -100,6 +100,7 @@ class DeltaConfig:
     """Delta Lake dependency configuration."""
     source_repo: str
     source_branch: str = "master"
+    spark_version: str = "4.0.1"
 
     def __post_init__(self):
         """Validate configuration."""
@@ -110,7 +111,7 @@ class DeltaConfig:
 
     def get_cache_key_component(self) -> str:
         """Get a unique string for cache key computation."""
-        return f"delta_{self.source_repo}_{self.source_branch}"
+        return f"delta_{self.source_repo}_{self.source_branch}_{self.spark_version}"
 
 
 @dataclass
@@ -388,9 +389,14 @@ class SparkShell:
         # Build timeout is 2x normal (Delta builds are slow)
         delta_timeout = self.op_config.build_timeout * 2
 
+        # Delta's build reads sys.props("sparkVersion"). For ~/delta (CrossSparkVersions):
+        # valid values are "4.0.1", "4.0", "4.1.0", "4.1", "default".
+        spark_version = self.delta_config.spark_version
+        if self.op_config.verbose:
+            print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version}")
         try:
             self._run_command(
-                [str(sbt_script), "-DsparkVersion=master", "publishLocal"],
+                [str(sbt_script), f"-DsparkVersion={spark_version}", "publishLocal"],
                 cwd=delta_dir,
                 timeout=delta_timeout,
                 check=True,
