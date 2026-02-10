@@ -696,8 +696,10 @@ class SparkShell:
         try:
             # Publish to Maven local so Coursier-based resolution in SparkShell picks up local UC builds.
             # Must publish both client and spark modules since spark depends on client.
+            # For client: use publishLocal (Ivy ~/.ivy2) to avoid javadoc issues with OpenAPI-generated code.
+            # SparkShell build.sbt already includes both Ivy and Maven resolvers.
             self._run_command(
-                [str(sbt_script), "client/publishM2", "spark/publishM2"],
+                [str(sbt_script), "client/publishLocal", "spark/publishM2"],
                 cwd=uc_dir,
                 timeout=uc_timeout,
                 check=True,
