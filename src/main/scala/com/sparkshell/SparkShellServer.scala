@@ -1,10 +1,6 @@
 package com.sparkshell
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.serverSidePlanning.{
-  ServerSidePlanningClientFactory,
-  IcebergRESTCatalogPlanningClientFactory
-}
 
 
 class SparkShellServer(spark: SparkSession, port: Int) {
@@ -41,6 +37,26 @@ class SparkShellServer(spark: SparkSession, port: Int) {
 
 object SparkShellServer {
   private val DEFAULT_PORT = 8080
+
+  private def tryRegisterServerSidePlanningFactory(): Unit = {
+    try {
+      val factoryClass = Class.forName(
+        "org.apache.spark.sql.delta.serverSidePlanning.IcebergRESTCatalogPlanningClientFactory")
+      val singletonField = factoryClass.getField("MODULE$")
+      val factoryInstance = singletonField.get(null)
+
+      val registryClass = Class.forName(
+        "org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlanningClientFactory")
+      val setFactory = registryClass.getMethod("setFactory", factoryClass)
+      setFactory.invoke(null, factoryInstance)
+      println("Registered IcebergRESTCatalogPlanningClientFactory for server-side planning")
+    } catch {
+      case _: ClassNotFoundException =>
+        println("Server-side planning classes not found; skipping FGAC planning client registration")
+      case e: Exception =>
+        println(s"Warning: failed to register server-side planning client factory: ${e.getMessage}")
+    }
+  }
 
   def main(args: Array[String]): Unit = {
     // Parse arguments: port [key1=value1 key2=value2 ...]
@@ -103,9 +119,8 @@ object SparkShellServer {
     }
     println("=" * 60)
 
-    // Register server-side planning client factory for FGAC support
-    ServerSidePlanningClientFactory.setFactory(new IcebergRESTCatalogPlanningClientFactory())
-    println("Registered IcebergRESTCatalogPlanningClientFactory for server-side planning")
+    // Register server-side planning client factory for FGAC support (when available).
+    tryRegisterServerSidePlanningFactory()
 
     // Eagerly initialize Spark internals to avoid lazy loading issues
     try {

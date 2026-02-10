@@ -143,9 +143,12 @@ class DeltaConfig:
     source_repo: str
     source_branch: str = "master"
     spark_version: str = "4.0.1"
+    source_dir: Optional[str] = None
 
     def __post_init__(self):
         """Validate configuration."""
+        if self.source_dir:
+            return
         if not self.source_repo.startswith("http"):
             raise ValueError(
                 f"source_repo must be a URL (starting with 'http'), got: {self.source_repo}"
@@ -153,6 +156,9 @@ class DeltaConfig:
 
     def get_cache_key_component(self) -> str:
         """Get a unique string for cache key computation."""
+        if self.source_dir:
+            source_dir = str(Path(self.source_dir).expanduser().resolve())
+            return f"delta_local_{source_dir}_{self.spark_version}"
         return f"delta_{self.source_repo}_{self.source_branch}_{self.spark_version}"
 
 
@@ -161,9 +167,12 @@ class UnityCatalogSourceConfig:
     """Unity Catalog source configuration for building from a fork with FGAC support."""
     source_repo: str = "https://github.com/murali-db/unitycatalog"
     source_branch: str = "fgac-fix"
+    source_dir: Optional[str] = None
 
     def __post_init__(self):
         """Validate configuration."""
+        if self.source_dir:
+            return
         if not self.source_repo.startswith("http"):
             raise ValueError(
                 f"source_repo must be a URL (starting with 'http'), got: {self.source_repo}"
@@ -171,6 +180,9 @@ class UnityCatalogSourceConfig:
 
     def get_cache_key_component(self) -> str:
         """Get a unique string for cache key computation."""
+        if self.source_dir:
+            source_dir = str(Path(self.source_dir).expanduser().resolve())
+            return f"uc_local_{source_dir}"
         return f"uc_{self.source_repo}_{self.source_branch}"
 
 
@@ -240,7 +252,7 @@ class SparkShell:
         self.is_ready = False
 
         # Tee: all print output is also written to a log file
-        self._original_stdout = None
+        self._original_stdout: Optional[object] = None
         self._tee_instance: Optional[_TeeOutput] = None
 
         # API base URL
@@ -253,9 +265,11 @@ class SparkShell:
         self._debug("  work_dir (initial):", self.work_dir)
         self._debug("  Delta repo:", self.delta_config.source_repo)
         self._debug("  Delta branch:", self.delta_config.source_branch)
+        self._debug("  Delta source_dir:", self.delta_config.source_dir)
         self._debug("  Delta spark_version:", self.delta_config.spark_version)
         self._debug("  UC source repo:", self.uc_source_config.source_repo)
         self._debug("  UC source branch:", self.uc_source_config.source_branch)
+        self._debug("  UC source_dir:", self.uc_source_config.source_dir)
         self._debug("  verbose:", self.op_config.verbose)
         self._debug("  startup_timeout:", self.op_config.startup_timeout)
         self._debug("  build_timeout:", self.op_config.build_timeout)
@@ -394,8 +408,25 @@ class SparkShell:
         Returns:
             Path to Delta directory
         """
+        # Local-dev mode: use pre-existing local Delta source directly.
+        if self.delta_config.source_dir:
+            local_delta_dir = Path(self.delta_config.source_dir).expanduser().resolve()
+            self._debug("_setup_delta: source mode=local_dir path=", local_delta_dir)
+            if not local_delta_dir.exists():
+                raise RuntimeError(
+                    f"Configured local Delta directory does not exist: {local_delta_dir}\n"
+                    f"Set DeltaConfig.source_dir to a valid path."
+                )
+            if not (local_delta_dir / "build.sbt").exists():
+                raise RuntimeError(
+                    f"Local Delta directory does not contain build.sbt: {local_delta_dir}"
+                )
+            print(f"[SparkShell] Delta source mode: local_dir ({local_delta_dir})")
+            return local_delta_dir
+
         delta_dir = self.work_dir / "delta"
         self._debug("_setup_delta: work_dir=", self.work_dir, "delta_dir=", delta_dir)
+        print("[SparkShell] Delta source mode: git_clone")
 
         if delta_dir.exists():
             self._debug("  Delta dir already exists, skipping clone")
@@ -502,6 +533,20 @@ class SparkShell:
                 check=True,
                 force_output=True
             )
+            # CrossSpark publish command does not always publish delta-storage.
+            # Publish it explicitly so SparkShell can resolve delta-spark transitive deps from ~/.m2.
+            if cross_spark:
+                storage_args = [str(sbt_script), "storage/publishM2"]
+                self._debug("  publishing delta-storage explicitly:", " ".join(storage_args))
+                if self.op_config.verbose:
+                    print("[SparkShell] Publishing Delta storage module to Maven local...")
+                self._run_command(
+                    storage_args,
+                    cwd=delta_dir,
+                    timeout=delta_timeout,
+                    check=True,
+                    force_output=True
+                )
             self._debug("_build_delta: Delta Lake build completed successfully")
             print("[SparkShell] Delta Lake build complete")
         except subprocess.TimeoutExpired:
@@ -555,8 +600,25 @@ class SparkShell:
         Returns:
             Path to Unity Catalog directory
         """
+        # Local-dev mode: use pre-existing local UC source directly.
+        if self.uc_source_config.source_dir:
+            local_uc_dir = Path(self.uc_source_config.source_dir).expanduser().resolve()
+            self._debug("_setup_uc: source mode=local_dir path=", local_uc_dir)
+            if not local_uc_dir.exists():
+                raise RuntimeError(
+                    f"Configured local Unity Catalog directory does not exist: {local_uc_dir}\n"
+                    f"Set UnityCatalogSourceConfig.source_dir to a valid path."
+                )
+            if not (local_uc_dir / "build.sbt").exists():
+                raise RuntimeError(
+                    f"Local Unity Catalog directory does not contain build.sbt: {local_uc_dir}"
+                )
+            print(f"[SparkShell] Unity Catalog source mode: local_dir ({local_uc_dir})")
+            return local_uc_dir
+
         uc_dir = self.work_dir / "unitycatalog"
         self._debug("_setup_uc: uc_dir=", uc_dir, "exists=", uc_dir.exists())
+        print("[SparkShell] Unity Catalog source mode: git_clone")
 
         if uc_dir.exists():
             self._debug("  UC dir already exists, skipping clone")
@@ -941,8 +1003,13 @@ class SparkShell:
         # Setup and build Delta from source
         if self.op_config.verbose:
             print(f"[SparkShell] Setting up Delta Lake:")
-            print(f"  Repository: {self.delta_config.source_repo}")
-            print(f"  Branch: {self.delta_config.source_branch}")
+            if self.delta_config.source_dir:
+                print(f"  Source mode: local_dir")
+                print(f"  Path: {self.delta_config.source_dir}")
+            else:
+                print(f"  Source mode: git_clone")
+                print(f"  Repository: {self.delta_config.source_repo}")
+                print(f"  Branch: {self.delta_config.source_branch}")
 
         delta_dir = self._setup_delta()
         self._build_delta(delta_dir)
@@ -952,8 +1019,13 @@ class SparkShell:
         # Setup and build Unity Catalog from source (for FGAC support)
         if self.op_config.verbose:
             print(f"[SparkShell] Setting up Unity Catalog:")
-            print(f"  Repository: {self.uc_source_config.source_repo}")
-            print(f"  Branch: {self.uc_source_config.source_branch}")
+            if self.uc_source_config.source_dir:
+                print(f"  Source mode: local_dir")
+                print(f"  Path: {self.uc_source_config.source_dir}")
+            else:
+                print(f"  Source mode: git_clone")
+                print(f"  Repository: {self.uc_source_config.source_repo}")
+                print(f"  Branch: {self.uc_source_config.source_branch}")
 
         uc_dir = self._setup_uc()
         self._build_uc(uc_dir)
@@ -962,8 +1034,16 @@ class SparkShell:
         print(f"[SparkShell] ========================================")
         print(f"[SparkShell] Build Configuration:")
         print(f"[SparkShell]   Spark:  4.0.0")
-        print(f"[SparkShell]   Delta:  {delta_version} (built from {self.delta_config.source_branch})")
-        print(f"[SparkShell]   UC:     0.3.0 (built from {self.uc_source_config.source_branch})")
+        if self.delta_config.source_dir:
+            print(f"[SparkShell]   Delta:  {delta_version} (source mode: local_dir)")
+            print(f"[SparkShell]           path: {Path(self.delta_config.source_dir).expanduser().resolve()}")
+        else:
+            print(f"[SparkShell]   Delta:  {delta_version} (built from {self.delta_config.source_branch})")
+        if self.uc_source_config.source_dir:
+            print(f"[SparkShell]   UC:     0.3.0 (source mode: local_dir)")
+            print(f"[SparkShell]           path: {Path(self.uc_source_config.source_dir).expanduser().resolve()}")
+        else:
+            print(f"[SparkShell]   UC:     0.3.0 (built from {self.uc_source_config.source_branch})")
         print(f"[SparkShell]   ANTLR:  4.13.1 (via Spark Master)")
         print(f"[SparkShell] ========================================")
 
@@ -980,10 +1060,16 @@ class SparkShell:
         # Create environment variables for SBT
         build_env = {
             "DELTA_VERSION": delta_version,
+            "DELTA_SPARK_VERSION": self.delta_config.spark_version,
             "DELTA_USE_LOCAL": "true",
             "UC_USE_LOCAL": "true"
         }
-        self._debug("build: SparkShell sbt env: DELTA_VERSION=", delta_version, "DELTA_USE_LOCAL=true UC_USE_LOCAL=true")
+        self._debug(
+            "build: SparkShell sbt env: DELTA_VERSION=",
+            delta_version,
+            "DELTA_SPARK_VERSION=",
+            self.delta_config.spark_version,
+            "DELTA_USE_LOCAL=true UC_USE_LOCAL=true")
         self._debug("build: running sbt assembly from work_dir=", self.work_dir)
 
         try:
