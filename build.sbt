@@ -13,26 +13,21 @@ val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
 // UC_USE_LOCAL=false (default): use UC from Maven Central (no FGAC support)
 val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
 
-// Add Maven local when using local Delta or UC builds.
-// Delta: publishM2 → ~/.m2 (Resolver.mavenLocal). UC: publishLocal → ~/.ivy2/local (sbt default resolvers include Ivy local).
-resolvers ++= {
-  val needsMavenLocal = deltaUseLocal || ucUseLocal
-
-  if (deltaUseLocal) {
-    println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
-  } else {
-    println(s"[SparkShell] Using Delta Lake from Maven Central (version: $deltaVersion)")
-  }
-
-  if (ucUseLocal) {
-    println(s"[SparkShell] Using local Unity Catalog build (FGAC support enabled)")
-    println(s"[SparkShell] NOTE: Build UC first: cd unitycatalog && ./build/sbt spark/publishLocal")
-  } else {
-    println(s"[SparkShell] Using Unity Catalog from Maven Central (no FGAC support)")
-  }
-
-  if (needsMavenLocal) Seq(Resolver.mavenLocal) else Seq.empty
+// When using local Delta or UC: prepend Maven local so ~/.m2 is checked first (Delta is publishM2 → ~/.m2).
+// Otherwise resolution may hit Ivy local / Maven Central first and fail for snapshot versions.
+val needsMavenLocal = deltaUseLocal || ucUseLocal
+if (deltaUseLocal) {
+  println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
+} else {
+  println(s"[SparkShell] Using Delta Lake from Maven Central (version: $deltaVersion)")
 }
+if (ucUseLocal) {
+  println(s"[SparkShell] Using local Unity Catalog build (FGAC support enabled)")
+  println(s"[SparkShell] NOTE: Build UC first: cd unitycatalog && ./build/sbt spark/publishLocal")
+} else {
+  println(s"[SparkShell] Using Unity Catalog from Maven Central (no FGAC support)")
+}
+resolvers := (if (needsMavenLocal) Seq(Resolver.mavenLocal) else Seq.empty) ++ resolvers.value
 
 // Main class for easy running
 Compile / mainClass := Some("com.sparkshell.SparkShellServer")

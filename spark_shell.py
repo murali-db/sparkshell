@@ -61,6 +61,48 @@ from datetime import datetime
 # Shared debug log file - same as Delta's FGACDebugLog.scala
 FGAC_DEBUG_LOG = "/tmp/fgac_debug.log"
 
+
+class _TeeOutput:
+    """Writes to original stream and to log files. Buffers until add_file() so a later-added file gets full log."""
+
+    def __init__(self, stream, log_files: list):
+        self._stream = stream
+        self._log_files = list(log_files)
+        self._buffer: Optional[list] = []  # buffer output until add_file() so the new file gets content from start
+
+    def add_file(self, f):
+        if self._buffer is not None:
+            try:
+                f.write("".join(self._buffer))
+                f.flush()
+            except (OSError, ValueError):
+                pass
+            self._buffer = None
+        self._log_files.append(f)
+
+    def write(self, data):
+        self._stream.write(data)
+        if self._buffer is not None:
+            self._buffer.append(data)
+        for f in self._log_files:
+            try:
+                f.write(data)
+                f.flush()
+            except (OSError, ValueError):
+                pass
+
+    def flush(self):
+        self._stream.flush()
+        for f in self._log_files:
+            try:
+                f.flush()
+            except (OSError, ValueError):
+                pass
+
+    def isatty(self):
+        return getattr(self._stream, "isatty", lambda: False)()
+
+
 def fgac_log(component: str, message: str):
     """Write debug message to shared FGAC debug log file."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -197,8 +239,34 @@ class SparkShell:
         self.jar_path: Optional[Path] = None
         self.is_ready = False
 
+        # Tee: all print output is also written to a log file
+        self._original_stdout = None
+        self._tee_instance: Optional[_TeeOutput] = None
+
         # API base URL
         self.base_url = f"http://localhost:{self.port}"
+
+        # Debug: print config summary so we know exactly what is happening
+        self._debug("=== SparkShell config ===")
+        self._debug("  source:", self.source)
+        self._debug("  port:", self.port)
+        self._debug("  work_dir (initial):", self.work_dir)
+        self._debug("  Delta repo:", self.delta_config.source_repo)
+        self._debug("  Delta branch:", self.delta_config.source_branch)
+        self._debug("  Delta spark_version:", self.delta_config.spark_version)
+        self._debug("  UC source repo:", self.uc_source_config.source_repo)
+        self._debug("  UC source branch:", self.uc_source_config.source_branch)
+        self._debug("  verbose:", self.op_config.verbose)
+        self._debug("  startup_timeout:", self.op_config.startup_timeout)
+        self._debug("  build_timeout:", self.op_config.build_timeout)
+        self._debug("  cache key hash:", self._get_source_hash())
+        self._debug("  cache dir:", self._get_cache_dir())
+        self._debug("=========================")
+
+    def _debug(self, msg: str, *args):
+        """Print debug message (always on so we know exactly what is happening)."""
+        parts = [str(msg)] + [str(a) for a in args]
+        print("[SparkShell] DEBUG:", " ".join(parts))
 
     def _get_source_hash(self) -> str:
         """
@@ -240,6 +308,7 @@ class SparkShell:
         cache_dir = self._get_cache_dir()
         jar_path = cache_dir / "target" / "scala-2.13" / "sparkshell.jar"
         has_cache = jar_path.exists()
+        self._debug("_has_cached_build: cache_dir=", cache_dir, "jar exists=", has_cache)
 
         if self.op_config.verbose:
             print(f"[SparkShell] Cache status:")
@@ -252,6 +321,7 @@ class SparkShell:
     def _use_cached_build(self):
         """Use the cached build instead of building from scratch."""
         cache_dir = self._get_cache_dir()
+        self._debug("_use_cached_build: cache_dir=", cache_dir)
         print(f"[SparkShell] Using cached build from: {cache_dir}")
 
         # Set work_dir to cache directory
@@ -259,6 +329,7 @@ class SparkShell:
 
         # Set jar_path
         self.jar_path = cache_dir / "target" / "scala-2.13" / "sparkshell.jar"
+        self._debug("  jar_path=", self.jar_path)
 
         if not self.jar_path.exists():
             raise RuntimeError(f"Cached JAR not found at: {self.jar_path}")
@@ -292,15 +363,19 @@ class SparkShell:
 
     def _cache_build(self):
         """Cache the current build for future reuse."""
+        self._debug("_cache_build: work_dir=", self.work_dir, "jar_path=", self.jar_path)
         if not self.work_dir or not self.jar_path:
+            self._debug("  skip: no work_dir or jar_path")
             return
 
         cache_dir = self._get_cache_dir()
 
         # If we're already using the cache directory, no need to copy
         if self.work_dir == cache_dir:
+            self._debug("  skip: already in cache dir")
             return
 
+        self._debug("  copying work_dir to cache_dir:", cache_dir)
         print(f"[SparkShell] Caching build to: {cache_dir}")
 
         # Remove old cache if it exists
@@ -320,12 +395,15 @@ class SparkShell:
             Path to Delta directory
         """
         delta_dir = self.work_dir / "delta"
+        self._debug("_setup_delta: work_dir=", self.work_dir, "delta_dir=", delta_dir)
 
         if delta_dir.exists():
+            self._debug("  Delta dir already exists, skipping clone")
             if self.op_config.verbose:
                 print(f"[SparkShell] Delta directory already exists: {delta_dir}")
             return delta_dir
 
+        self._debug("  Cloning from", self.delta_config.source_repo)
         print(f"[SparkShell] Cloning Delta from {self.delta_config.source_repo}...")
 
         try:
@@ -342,6 +420,7 @@ class SparkShell:
                 f"Please check that the repository URL is correct and accessible."
             )
 
+        self._debug("  Checking out branch:", self.delta_config.source_branch)
         print(f"[SparkShell] Checking out branch: {self.delta_config.source_branch}")
 
         try:
@@ -359,13 +438,18 @@ class SparkShell:
             )
 
         # Verify build.sbt exists
-        if not (delta_dir / "build.sbt").exists():
+        build_sbt = delta_dir / "build.sbt"
+        cross_spark_file = delta_dir / "project" / "CrossSparkVersions.scala"
+        self._debug("  build.sbt exists:", build_sbt.exists())
+        self._debug("  CrossSparkVersions.scala exists:", cross_spark_file.exists())
+        if not build_sbt.exists():
             raise RuntimeError(
                 f"Delta repository does not contain build.sbt\n"
                 f"Directory: {delta_dir}\n"
                 f"This may not be a valid Delta Lake repository."
             )
 
+        self._debug("_setup_delta complete:", delta_dir)
         print(f"[SparkShell] Delta repository ready: {delta_dir}")
         return delta_dir
 
@@ -376,10 +460,12 @@ class SparkShell:
         Args:
             delta_dir: Path to Delta repository
         """
+        self._debug("_build_delta: delta_dir=", delta_dir)
         print("[SparkShell] Building Delta Lake from source...")
         print("[SparkShell] This may take 10+ minutes on first run...")
 
         sbt_script = delta_dir / "build" / "sbt"
+        self._debug("  sbt_script=", sbt_script, "exists=", sbt_script.exists())
         if not sbt_script.exists():
             raise FileNotFoundError(f"Delta SBT script not found: {sbt_script}")
 
@@ -388,6 +474,7 @@ class SparkShell:
 
         # Build timeout is 2x normal (Delta builds are slow)
         delta_timeout = self.op_config.build_timeout * 2
+        self._debug("  delta_timeout=", delta_timeout, "seconds")
 
         # Delta's build reads sys.props("sparkVersion"). Publish with publishM2 so artifacts go to ~/.m2;
         # SparkShell resolves from Resolver.mavenLocal.
@@ -395,14 +482,18 @@ class SparkShell:
         # Other Delta (e.g. murali-db/delta): use clean package publishM2.
         spark_version = self.delta_config.spark_version
         cross_spark = (delta_dir / "project" / "CrossSparkVersions.scala").exists()
+        self._debug("  spark_version=", spark_version, "cross_spark (CrossSparkVersions)=", cross_spark)
         if cross_spark:
             sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "runOnlyForReleasableSparkModules publishM2"]
+            self._debug("  using CrossSparkVersions command: runOnlyForReleasableSparkModules publishM2")
             if self.op_config.verbose:
                 print(f"[SparkShell] Building Delta (CrossSparkVersions) with -DsparkVersion={spark_version} runOnlyForReleasableSparkModules publishM2")
         else:
             sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "package", "publishM2"]
+            self._debug("  using standard command: clean package publishM2")
             if self.op_config.verbose:
                 print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version} publishM2")
+        self._debug("  full sbt command:", " ".join(sbt_args))
         try:
             self._run_command(
                 sbt_args,
@@ -411,6 +502,7 @@ class SparkShell:
                 check=True,
                 force_output=True
             )
+            self._debug("_build_delta: Delta Lake build completed successfully")
             print("[SparkShell] Delta Lake build complete")
         except subprocess.TimeoutExpired:
             raise RuntimeError(
@@ -438,6 +530,7 @@ class SparkShell:
             Delta version string
         """
         version_file = delta_dir / "version.sbt"
+        self._debug("_get_delta_version: version_file=", version_file, "exists=", version_file.exists())
 
         if version_file.exists():
             content = version_file.read_text()
@@ -445,7 +538,12 @@ class SparkShell:
             import re
             match = re.search(r'version\s*:=\s*"([^"]+)"', content)
             if match:
-                return match.group(1)
+                ver = match.group(1)
+                self._debug("  parsed version:", ver)
+                return ver
+            self._debug("  no version match in content, using default")
+        else:
+            self._debug("  no version.sbt, using default 0.0.0-SNAPSHOT")
 
         # Default to snapshot version
         return "0.0.0-SNAPSHOT"
@@ -458,12 +556,15 @@ class SparkShell:
             Path to Unity Catalog directory
         """
         uc_dir = self.work_dir / "unitycatalog"
+        self._debug("_setup_uc: uc_dir=", uc_dir, "exists=", uc_dir.exists())
 
         if uc_dir.exists():
+            self._debug("  UC dir already exists, skipping clone")
             if self.op_config.verbose:
                 print(f"[SparkShell] Unity Catalog directory already exists: {uc_dir}")
             return uc_dir
 
+        self._debug("  Cloning from", self.uc_source_config.source_repo, "branch", self.uc_source_config.source_branch)
         print(f"[SparkShell] Cloning Unity Catalog from {self.uc_source_config.source_repo}...")
 
         try:
@@ -514,10 +615,12 @@ class SparkShell:
         Args:
             uc_dir: Path to Unity Catalog repository
         """
+        self._debug("_build_uc: uc_dir=", uc_dir)
         print("[SparkShell] Building Unity Catalog Spark connector from source...")
         print("[SparkShell] This may take a few minutes on first run...")
 
         sbt_script = uc_dir / "build" / "sbt"
+        self._debug("  sbt_script=", sbt_script, "exists=", sbt_script.exists())
         if not sbt_script.exists():
             raise FileNotFoundError(f"Unity Catalog SBT script not found: {sbt_script}")
 
@@ -526,6 +629,7 @@ class SparkShell:
 
         # UC build timeout
         uc_timeout = self.op_config.build_timeout
+        self._debug("  uc_timeout=", uc_timeout, "command: spark/publishLocal (Ivy -> ~/.ivy2/local)")
 
         try:
             # Use publishLocal (Ivy) not publishM2 (Maven) - SBT prefers Ivy cache
@@ -536,6 +640,7 @@ class SparkShell:
                 check=True,
                 force_output=True
             )
+            self._debug("_build_uc: UC build completed successfully")
             print("[SparkShell] Unity Catalog build complete")
         except subprocess.TimeoutExpired:
             raise RuntimeError(
@@ -567,12 +672,17 @@ class SparkShell:
         Returns:
             subprocess.CompletedProcess
         """
+        self._debug("_run_command: cwd=", cwd, "timeout=", timeout, "check=", check)
+        self._debug("  cmd:", " ".join(str(x) for x in cmd))
+        if env:
+            self._debug("  env (overrides):", list(env.keys()))
+            if self.op_config.verbose:
+                print(f"[SparkShell] Environment variables: {env}")
+
         # Build environment
         command_env = os.environ.copy()
         if env:
             command_env.update(env)
-            if self.op_config.verbose:
-                print(f"[SparkShell] Environment variables: {env}")
 
         if self.op_config.verbose:
             print(f"[SparkShell] Running: {' '.join(cmd)}")
@@ -588,10 +698,11 @@ class SparkShell:
             )
             if check and result.returncode != 0:
                 raise subprocess.CalledProcessError(result.returncode, cmd)
+            self._debug("  _run_command completed, returncode=", result.returncode)
             return result
         else:
             # Capture output silently
-            return subprocess.run(
+            result = subprocess.run(
                 cmd,
                 cwd=cwd,
                 timeout=timeout,
@@ -600,6 +711,8 @@ class SparkShell:
                 text=True,
                 env=command_env
             )
+            self._debug("  _run_command completed (captured), returncode=", result.returncode)
+            return result
 
     def __enter__(self):
         """Context manager entry - start server (setup and build happen automatically)."""
@@ -614,6 +727,48 @@ class SparkShell:
             self.cleanup()
         return False
     
+    def _start_output_log(self):
+        """Start piping all stdout to a log file in addition to console."""
+        if self._original_stdout is not None:
+            return  # already teeing
+        self._original_stdout = sys.stdout
+        tmp_log = Path("/tmp") / f"sparkshell_output_{os.getpid()}.log"
+        try:
+            f = open(tmp_log, "w")
+            tee = _TeeOutput(self._original_stdout, [f])
+            self._tee_instance = tee
+            sys.stdout = tee
+            print(f"[SparkShell] All output is also written to: {tmp_log}")
+        except OSError:
+            sys.stdout = self._original_stdout
+            self._original_stdout = None
+            self._tee_instance = None
+
+    def _add_output_log_file(self, path: Path):
+        """Add another log file to the tee (e.g. work_dir / sparkshell_output.log). Gets full output from start via buffer."""
+        if self._tee_instance is None:
+            return
+        try:
+            f = open(path, "w")
+            self._tee_instance.add_file(f)
+            print(f"[SparkShell] All output is also written to: {path}")
+        except OSError:
+            pass
+
+    def _stop_output_log(self):
+        """Stop teeing and close log files."""
+        if self._original_stdout is None:
+            return
+        sys.stdout = self._original_stdout
+        self._original_stdout = None
+        if self._tee_instance is not None:
+            for f in self._tee_instance._log_files:
+                try:
+                    f.close()
+                except (OSError, ValueError):
+                    pass
+            self._tee_instance = None
+
     def setup(self, force_refresh: bool = False):
         """
         Download or copy SparkApp code to temp directory.
@@ -621,29 +776,39 @@ class SparkShell:
         Args:
             force_refresh: If True, bypass cache and download/copy fresh source
         """
+        self._start_output_log()
+        self._debug("setup() called, force_refresh=", force_refresh)
         print(f"[SparkShell] Setting up from source: {self.source}")
 
         # Create temp directory (but we might switch to cache later)
         if self.temp_dir:
             self.work_dir = Path(self.temp_dir)
             self.work_dir.mkdir(parents=True, exist_ok=True)
+            self._debug("  using temp_dir from config:", self.work_dir)
         else:
             # If using cache, use cache directory; otherwise use temp
-            if not force_refresh and self._has_cached_build():
+            has_cache = self._has_cached_build()
+            self._debug("  has_cached_build:", has_cache)
+            if not force_refresh and has_cache:
                 self.work_dir = self._get_cache_dir()
+                self._debug("  using cache as work_dir:", self.work_dir)
             else:
                 self.work_dir = Path(tempfile.mkdtemp(prefix="sparkshell_"))
+                self._debug("  created temp work_dir:", self.work_dir)
 
         print(f"[SparkShell] Working directory: {self.work_dir}")
 
         # If using cached build, skip download/copy
         if not force_refresh and self._has_cached_build() and self.work_dir == self._get_cache_dir():
+            self._debug("  skipping download/copy: using existing cached source")
             print("[SparkShell] Using existing cached source")
         else:
             # Determine if source is GitHub URL or local path
             if self.source.startswith("http://") or self.source.startswith("https://"):
+                self._debug("  source is URL -> _download_from_github()")
                 self._download_from_github()
             else:
+                self._debug("  source is local path -> _copy_from_local()")
                 self._copy_from_local()
 
             # Verify required files exist
@@ -655,6 +820,10 @@ class SparkShell:
                         f"Ensure source contains a valid SparkApp project."
                     )
 
+        # Add work_dir log path so the main log is next to sparkshell.log
+        if self.work_dir:
+            self._add_output_log_file(self.work_dir / "sparkshell_output.log")
+        self._debug("setup() complete. work_dir=", self.work_dir)
         print("[SparkShell] Setup complete")
     
     def _download_from_github(self):
@@ -740,20 +909,27 @@ class SparkShell:
         Args:
             force_refresh: If True, force rebuild even if cached build exists
         """
+        self._debug("build() called, force_refresh=", force_refresh)
         # Check if we can use cached build
+        has_cache = self._has_cached_build()
+        self._debug("  has_cached_build:", has_cache)
         if self.op_config.verbose:
             print(f"[SparkShell] Build decision:")
             print(f"  Force refresh: {force_refresh}")
 
-        if not force_refresh and self._has_cached_build():
+        if not force_refresh and has_cache:
+            self._debug("  decision: using cached build")
             if self.op_config.verbose:
                 print(f"[SparkShell] Decision: Using cached build (cache exists and no force refresh)")
             self._use_cached_build()
             # Ensure .sbtopts is present in the cached work_dir
             self._ensure_sbtopts()
+            self._debug("build() complete (cache). jar_path=", self.jar_path)
             print("[SparkShell] Build complete (using cache)")
             return
-        elif self.op_config.verbose:
+        else:
+            self._debug("  decision: building from scratch (force_refresh=", force_refresh, "or no cache)")
+        if self.op_config.verbose:
             if force_refresh:
                 print(f"[SparkShell] Decision: Building from scratch (force refresh requested)")
             else:
@@ -771,6 +947,7 @@ class SparkShell:
         delta_dir = self._setup_delta()
         self._build_delta(delta_dir)
         delta_version = self._get_delta_version(delta_dir)
+        self._debug("build: delta_version for SparkShell sbt env:", delta_version)
 
         # Setup and build Unity Catalog from source (for FGAC support)
         if self.op_config.verbose:
@@ -806,6 +983,8 @@ class SparkShell:
             "DELTA_USE_LOCAL": "true",
             "UC_USE_LOCAL": "true"
         }
+        self._debug("build: SparkShell sbt env: DELTA_VERSION=", delta_version, "DELTA_USE_LOCAL=true UC_USE_LOCAL=true")
+        self._debug("build: running sbt assembly from work_dir=", self.work_dir)
 
         try:
             # Run sbt assembly - always show output so users see build progress
@@ -820,10 +999,12 @@ class SparkShell:
 
             # Find the JAR file
             jar_path = self.work_dir / "target" / "scala-2.13" / "sparkshell.jar"
+            self._debug("build: expected jar_path=", jar_path, "exists=", jar_path.exists())
             if not jar_path.exists():
                 raise FileNotFoundError(f"Assembly JAR not found at: {jar_path}")
 
             self.jar_path = jar_path
+            self._debug("build() complete. jar_path=", self.jar_path)
             print(f"[SparkShell] Build complete: {self.jar_path}")
 
             # Cache the build for future reuse
@@ -853,31 +1034,44 @@ class SparkShell:
         Args:
             force_refresh: If True, force fresh download and rebuild, bypassing cache (default: False)
         """
+        self._debug("start() called, force_refresh=", force_refresh)
         # Automatically setup if not already done
         if not self.work_dir:
+            self._debug("  work_dir not set -> calling setup()")
             self.setup(force_refresh=force_refresh)
+        else:
+            self._debug("  work_dir already set:", self.work_dir)
 
         # Automatically build if not already done
         if not self.jar_path or not self.jar_path.exists():
+            self._debug("  jar_path missing or invalid -> calling build()")
             self.build(force_refresh=force_refresh)
+        else:
+            self._debug("  jar_path already set:", self.jar_path)
 
+        self._debug("start: port=", self.port, "base_url=", self.base_url)
         print(f"[SparkShell] Starting server on port {self.port}...")
         fgac_log("SparkShell.start", f"Starting server on port {self.port}")
         fgac_log("SparkShell.start", f"JAR path: {self.jar_path}")
         fgac_log("SparkShell.start", f"Work dir: {self.work_dir}")
 
         # Check if port is already in use
-        if self._is_port_in_use():
+        port_in_use = self._is_port_in_use()
+        self._debug("  port", self.port, "in use:", port_in_use)
+        if port_in_use:
             raise RuntimeError(f"Port {self.port} is already in use")
         
         # Start the server process
         log_file = self.work_dir / "sparkshell.log"
+        self._debug("  log_file=", log_file)
 
         # Build command with port and optional Spark configs
         # Use Java 17 for Spark 4.0 compatibility
         java_home = os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk-amd64")
         java_cmd = os.path.join(java_home, "bin", "java")
         cmd = [java_cmd, "-jar", str(self.jar_path), str(self.port)]
+        self._debug("  JAVA_HOME=", java_home, "java_cmd=", java_cmd)
+        self._debug("  full start cmd:", " ".join(cmd))
 
         # Add Spark configurations as key=value arguments
         if self.spark_config.configs:
@@ -912,6 +1106,7 @@ class SparkShell:
                 )
 
         # Wait for server to be ready
+        self._debug("start: waiting up to", self.op_config.startup_timeout, "s for server")
         print("[SparkShell] Waiting for server to start...")
         start_time = time.time()
 
@@ -939,6 +1134,7 @@ class SparkShell:
 
             if self._check_health():
                 self.is_ready = True
+                self._debug("start: server health check passed, is_ready=True")
                 print(f"[SparkShell] Server ready at {self.base_url}")
 
                 # Set Unity Catalog schema if configured (catalog is already set via defaultCatalog config)
@@ -1074,6 +1270,7 @@ class SparkShell:
     
     def shutdown(self):
         """Shutdown the server gracefully."""
+        self._debug("shutdown() called, process is", "None" if self.process is None else "running")
         if self.process is None:
             return
         
@@ -1100,17 +1297,22 @@ class SparkShell:
     
     def cleanup(self):
         """Clean up temporary files (but never delete the cache)."""
+        self._stop_output_log()
+        self._debug("cleanup() called, work_dir=", self.work_dir)
         if not self.work_dir or not self.work_dir.exists():
+            self._debug("  skip: no work_dir or does not exist")
             return
 
         cache_dir = self._get_cache_dir()
 
         # Never delete the cache directory
         if self.work_dir == cache_dir:
+            self._debug("  skip: work_dir is cache dir (never delete cache)")
             if self.op_config.verbose:
                 print(f"[SparkShell] Skipping cleanup: work_dir is cache directory")
             return
 
+        self._debug("  removing work_dir (temp):", self.work_dir)
         print(f"[SparkShell] Cleaning up: {self.work_dir}")
         try:
             shutil.rmtree(self.work_dir)
