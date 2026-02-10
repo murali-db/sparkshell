@@ -691,12 +691,12 @@ class SparkShell:
 
         # UC build timeout
         uc_timeout = self.op_config.build_timeout
-        self._debug("  uc_timeout=", uc_timeout, "command: spark/publishLocal (Ivy -> ~/.ivy2/local)")
+        self._debug("  uc_timeout=", uc_timeout, "command: spark/publishM2 (Maven -> ~/.m2/repository)")
 
         try:
-            # Use publishLocal (Ivy) not publishM2 (Maven) - SBT prefers Ivy cache
+            # Publish to Maven local so Coursier-based resolution in SparkShell picks up local UC builds.
             self._run_command(
-                [str(sbt_script), "spark/publishLocal"],
+                [str(sbt_script), "spark/publishM2"],
                 cwd=uc_dir,
                 timeout=uc_timeout,
                 check=True,

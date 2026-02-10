@@ -17,6 +17,7 @@ val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVe
 // UC_USE_LOCAL=true: use forked UC from Maven Local (requires building UC first)
 // UC_USE_LOCAL=false (default): use UC from Maven Central (no FGAC support)
 val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
+val ucVersion = if (ucUseLocal) "0.3.0-SNAPSHOT" else "0.3.0"
 
 // When using local Delta or UC: include Maven local so ~/.m2 snapshots are available (Delta is publishM2 → ~/.m2).
 // Keep it after normal repositories to avoid shadowing stable transitive dependencies with partial local artifacts.
@@ -79,9 +80,9 @@ libraryDependencies ++= Seq(
   "io.delta" %% deltaSparkModule % deltaVersion,
 
   // Unity Catalog
-  // UC_USE_LOCAL=true: use local build from ~/.m2/repository (FGAC support)
-  // UC_USE_LOCAL=false: use Maven Central version 0.3.0 (no FGAC support)
-  "io.unitycatalog" % "unitycatalog-spark_2.13" % "0.3.0",
+  // UC_USE_LOCAL=true: use local snapshot from ~/.m2/repository (FGAC support)
+  // UC_USE_LOCAL=false: use Maven Central release 0.3.0 (no FGAC support)
+  "io.unitycatalog" % "unitycatalog-spark_2.13" % ucVersion,
 
   // Cloud Storage Support (S3, ADLS)
   // Note: GCS connector removed due to protobuf version conflict
