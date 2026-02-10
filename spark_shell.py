@@ -691,12 +691,13 @@ class SparkShell:
 
         # UC build timeout
         uc_timeout = self.op_config.build_timeout
-        self._debug("  uc_timeout=", uc_timeout, "command: spark/publishM2 (Maven -> ~/.m2/repository)")
+        self._debug("  uc_timeout=", uc_timeout, "command: client/publishM2 spark/publishM2 (Maven -> ~/.m2/repository)")
 
         try:
             # Publish to Maven local so Coursier-based resolution in SparkShell picks up local UC builds.
+            # Must publish both client and spark modules since spark depends on client.
             self._run_command(
-                [str(sbt_script), "spark/publishM2"],
+                [str(sbt_script), "client/publishM2", "spark/publishM2"],
                 cwd=uc_dir,
                 timeout=uc_timeout,
                 check=True,
