@@ -389,14 +389,14 @@ class SparkShell:
         # Build timeout is 2x normal (Delta builds are slow)
         delta_timeout = self.op_config.build_timeout * 2
 
-        # Delta's build reads sys.props("sparkVersion"). For ~/delta (CrossSparkVersions):
-        # valid values are "4.0.1", "4.0", "4.1.0", "4.1", "default".
+        # Delta's build reads sys.props("sparkVersion"). Use e.g. "4.0.2-SNAPSHOT" or "master" (if supported).
+        # Publish with publishM2 so artifacts go to ~/.m2; SparkShell resolves from Resolver.mavenLocal.
         spark_version = self.delta_config.spark_version
         if self.op_config.verbose:
-            print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version}")
+            print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version} publishM2")
         try:
             self._run_command(
-                [str(sbt_script), f"-DsparkVersion={spark_version}", "publishLocal"],
+                [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "package", "publishM2"],
                 cwd=delta_dir,
                 timeout=delta_timeout,
                 check=True,

@@ -13,9 +13,11 @@ val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
 // UC_USE_LOCAL=false (default): use UC from Maven Central (no FGAC support)
 val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
 
-// Add Maven local resolver if using local Delta or UC builds
+// Add Maven local (and Ivy local for UC) when using local Delta or UC builds.
+// Delta is built with publishM2 so artifacts go to ~/.m2 (Resolver.mavenLocal).
+// UC is built with publishLocal so artifacts go to ~/.ivy2/local (Resolver.ivy2Local).
 resolvers ++= {
-  val needsMavenLocal = deltaUseLocal || ucUseLocal
+  val needsLocalResolvers = deltaUseLocal || ucUseLocal
 
   if (deltaUseLocal) {
     println(s"[SparkShell] Using local Delta Lake build (version: $deltaVersion)")
@@ -25,12 +27,12 @@ resolvers ++= {
 
   if (ucUseLocal) {
     println(s"[SparkShell] Using local Unity Catalog build (FGAC support enabled)")
-    println(s"[SparkShell] NOTE: Build UC first: cd unitycatalog && ./build/sbt spark/publishM2")
+    println(s"[SparkShell] NOTE: Build UC first: cd unitycatalog && ./build/sbt spark/publishLocal")
   } else {
     println(s"[SparkShell] Using Unity Catalog from Maven Central (no FGAC support)")
   }
 
-  if (needsMavenLocal) Seq(Resolver.mavenLocal) else Seq.empty
+  if (needsLocalResolvers) Seq(Resolver.mavenLocal, Resolver.ivy2Local) else Seq.empty
 }
 
 // Main class for easy running
