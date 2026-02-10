@@ -389,14 +389,23 @@ class SparkShell:
         # Build timeout is 2x normal (Delta builds are slow)
         delta_timeout = self.op_config.build_timeout * 2
 
-        # Delta's build reads sys.props("sparkVersion"). Use e.g. "4.0.2-SNAPSHOT" or "master" (if supported).
-        # Publish with publishM2 so artifacts go to ~/.m2; SparkShell resolves from Resolver.mavenLocal.
+        # Delta's build reads sys.props("sparkVersion"). Publish with publishM2 so artifacts go to ~/.m2;
+        # SparkShell resolves from Resolver.mavenLocal.
+        # CrossSparkVersions (~/delta): use runOnlyForReleasableSparkModules publishM2 for correct artifacts.
+        # Other Delta (e.g. murali-db/delta): use clean package publishM2.
         spark_version = self.delta_config.spark_version
-        if self.op_config.verbose:
-            print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version} publishM2")
+        cross_spark = (delta_dir / "project" / "CrossSparkVersions.scala").exists()
+        if cross_spark:
+            sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "runOnlyForReleasableSparkModules publishM2"]
+            if self.op_config.verbose:
+                print(f"[SparkShell] Building Delta (CrossSparkVersions) with -DsparkVersion={spark_version} runOnlyForReleasableSparkModules publishM2")
+        else:
+            sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "package", "publishM2"]
+            if self.op_config.verbose:
+                print(f"[SparkShell] Building Delta with -DsparkVersion={spark_version} publishM2")
         try:
             self._run_command(
-                [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "package", "publishM2"],
+                sbt_args,
                 cwd=delta_dir,
                 timeout=delta_timeout,
                 check=True,
