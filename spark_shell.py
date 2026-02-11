@@ -696,10 +696,12 @@ class SparkShell:
         try:
             # Publish to Maven local so Coursier-based resolution in SparkShell picks up local UC builds.
             # Must publish both client and spark modules since spark depends on client.
-            # Skip docs for client to avoid javadoc issues with OpenAPI-generated code that isn't available yet.
-            # Use packageBin + deliver + publish for client to bypass doc generation.
+            # For client: First compile to trigger OpenAPI code generation, then publish without docs.
+            # The Compile/sourceGenerators dependency should trigger OpenAPI generation automatically,
+            # but we explicitly run compile first to ensure it happens.
             self._run_command(
                 [str(sbt_script), 
+                 "client/compile",
                  "set client / packageDoc / publishArtifact := false",
                  "client/publishM2",
                  "spark/publishM2"],
