@@ -14,10 +14,11 @@ val deltaIcebergModule = deltaArtifactSuffix.map(s => s"delta-iceberg_" + s).get
 val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVersion.startsWith("4.2")
 
 // Read Unity Catalog configuration from environment
-// UC_USE_LOCAL=true: use forked UC from Maven Local (requires building UC first)
-// UC_USE_LOCAL=false (default): use UC from Maven Central (no FGAC support)
+// UC_USE_LOCAL=true: use UC from Maven Local (requires building UC first: build/sbt publishLocal)
+//    UC main branch is 0.5.0-SNAPSHOT; 0.3.0-SNAPSHOT no longer exists in the repo.
+// UC_USE_LOCAL=false (default): use UC from Maven Central (released 0.3.1)
 val ucUseLocal = sys.env.getOrElse("UC_USE_LOCAL", "false").toBoolean
-val ucVersion = if (ucUseLocal) "0.3.0-SNAPSHOT" else "0.3.0"
+val ucVersion = if (ucUseLocal) "0.5.0-SNAPSHOT" else "0.3.1"
 
 // When using local Delta or UC: include Maven local so ~/.m2 snapshots are available.
 // Both Delta and UC publish to ~/.m2 via publishM2.
@@ -81,8 +82,8 @@ libraryDependencies ++= Seq(
   "io.delta" %% deltaSparkModule % deltaVersion,
 
   // Unity Catalog
-  // UC_USE_LOCAL=true: use local snapshot from ~/.m2/repository (FGAC support)
-  // UC_USE_LOCAL=false: use Maven Central release 0.3.0 (no FGAC support)
+  // UC_USE_LOCAL=true: use 0.5.0-SNAPSHOT from ~/.m2 (build UC with publishLocal first)
+  // UC_USE_LOCAL=false: use Maven Central 0.3.1
   "io.unitycatalog" % "unitycatalog-spark_2.13" % ucVersion,
 
   // Cloud Storage Support (S3, ADLS)

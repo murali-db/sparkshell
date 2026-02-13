@@ -1048,10 +1048,10 @@ class SparkShell:
         else:
             print(f"[SparkShell]   Delta:  {delta_version} (built from {self.delta_config.source_branch})")
         if self.uc_source_config.source_dir:
-            print(f"[SparkShell]   UC:     0.3.0 (source mode: local_dir)")
+            print(f"[SparkShell]   UC:     0.5.0-SNAPSHOT (source mode: local_dir)")
             print(f"[SparkShell]           path: {Path(self.uc_source_config.source_dir).expanduser().resolve()}")
         else:
-            print(f"[SparkShell]   UC:     0.3.0 (built from {self.uc_source_config.source_branch})")
+            print(f"[SparkShell]   UC:     0.5.0-SNAPSHOT or 0.3.1 (built from {self.uc_source_config.source_branch}; UC_USE_LOCAL selects version)")
         print(f"[SparkShell]   ANTLR:  4.13.1 (via Spark Master)")
         print(f"[SparkShell] ========================================")
 
