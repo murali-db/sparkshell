@@ -44,9 +44,12 @@ class RestApi(sparkSession: SparkSession, port: Int) {
         } else {
 
           println(s"Executing SQL: ${sqlRequest.sql}")
-          sqlRequest.outputPath.foreach(path => println(s"Output path: $path"))
           
-          val result = executor.executeSql(sqlRequest.sql, sqlRequest.outputPath)
+          // Convert Java null to Scala Option
+          val outputPathOpt = Option(sqlRequest.outputPath)
+          outputPathOpt.foreach(path => println(s"Output path: $path"))
+          
+          val result = executor.executeSql(sqlRequest.sql, outputPathOpt)
 
           val response = SqlResponseJson(
             success = result.success,
@@ -112,7 +115,7 @@ class RestApi(sparkSession: SparkSession, port: Int) {
 // JSON request/response classes
 case class SqlRequestJson(
   sql: String,
-  outputPath: Option[String] = None  // Optional: write results to Parquet at this path
+  outputPath: String = null  // Optional: write results to Parquet at this path (null if not provided)
 )
 
 case class SqlResponseJson(
