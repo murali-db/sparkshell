@@ -112,14 +112,39 @@ class SparkSqlExecutor(spark: SparkSession) {
       // Unpersist cache
       cachedDf.unpersist()
       
-      // Return metadata about the write
+      // List all Parquet files that were written
+      val hadoopConf = spark.sparkContext.hadoopConfiguration
+      val fs = org.apache.hadoop.fs.FileSystem.get(
+        new java.net.URI(outputPath),
+        hadoopConf
+      )
+      val outputPathObj = new org.apache.hadoop.fs.Path(outputPath)
+      
+      val files = if (fs.exists(outputPathObj)) {
+        fs.listStatus(outputPathObj)
+          .map(_.getPath.toString)
+          .filter(_.endsWith(".parquet"))  // Only list .parquet files (skip _SUCCESS, _committed, etc.)
+          .sorted
+      } else {
+        Array.empty[String]
+      }
+      
+      val filesList = if (files.isEmpty) {
+        "No Parquet files found (write may have failed)"
+      } else {
+        files.mkString("\n")
+      }
+      
+      // Return metadata with file list
       val metadata = 
         s"""Results written to Parquet successfully!
            |
-           |Output Path: $outputPath
+           |Output Directory: $outputPath
            |Row Count: $rowCount
-           |Format: Parquet
-           |Mode: overwrite
+           |Parquet Files: ${files.length}
+           |
+           |Files:
+           |$filesList
            |
            |Schema:
            |${df.schema.treeString}
