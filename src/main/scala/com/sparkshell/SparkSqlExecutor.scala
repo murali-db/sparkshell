@@ -5,7 +5,7 @@ import scala.util.{Try, Success, Failure}
 
 class SparkSqlExecutor(spark: SparkSession) {
 
-  def executeSql(sqlQuery: String): SqlResult = {
+  def executeSql(sqlQuery: String, outputPath: Option[String] = None): SqlResult = {
     Try {
       val df = spark.sql(sqlQuery)
 
@@ -15,8 +15,15 @@ class SparkSqlExecutor(spark: SparkSession) {
         SqlResult(success = true, result = "Command executed successfully", error = None)
       } else {
         // Query that returns data
-        val resultString = formatDataFrame(df)
-        SqlResult(success = true, result = resultString, error = None)
+        outputPath match {
+          case Some(path) =>
+            // Write to Parquet and return metadata
+            writeToParquet(df, path)
+          case None =>
+            // Format and return as string (original behavior)
+            val resultString = formatDataFrame(df)
+            SqlResult(success = true, result = resultString, error = None)
+        }
       }
     } match {
       case Success(result) => result
@@ -87,6 +94,46 @@ class SparkSqlExecutor(spark: SparkSession) {
             s"Schema:\n${df.schema.treeString}\n" +
             s"Error: ${e.getMessage}"
         }
+    }
+  }
+
+  private def writeToParquet(df: DataFrame, outputPath: String): SqlResult = {
+    try {
+      // Get row count before writing (cached to avoid reading twice)
+      val cachedDf = df.cache()
+      val rowCount = cachedDf.count()
+      
+      // Write to Parquet
+      println(s"Writing ${rowCount} rows to Parquet at: $outputPath")
+      cachedDf.write
+        .mode("overwrite")  // Overwrite if exists
+        .parquet(outputPath)
+      
+      // Unpersist cache
+      cachedDf.unpersist()
+      
+      // Return metadata about the write
+      val metadata = 
+        s"""Results written to Parquet successfully!
+           |
+           |Output Path: $outputPath
+           |Row Count: $rowCount
+           |Format: Parquet
+           |Mode: overwrite
+           |
+           |Schema:
+           |${df.schema.treeString}
+           |""".stripMargin
+      
+      SqlResult(success = true, result = metadata, error = None)
+      
+    } catch {
+      case e: Exception =>
+        SqlResult(
+          success = false, 
+          result = "", 
+          error = Some(s"Failed to write Parquet: ${e.getMessage}")
+        )
     }
   }
 }

@@ -1274,29 +1274,46 @@ class SparkShell:
         except requests.exceptions.RequestException:
             return False
     
-    def execute_sql(self, sql: str) -> str:
+    def execute_sql(self, sql: str, output_path: Optional[str] = None) -> str:
         """
-        Execute SQL command and return only the result output.
+        Execute SQL command and return result output or write to Parquet.
 
         Args:
             sql: SQL command to execute
+            output_path: Optional path to write results as Parquet files.
+                        If provided, results are written to disk instead of returned.
+                        Supports local paths (/tmp/output) and cloud paths (s3://bucket/path, dbfs:/path)
 
         Returns:
-            str: Query result as formatted string
+            str: Query result as formatted string, OR write metadata if output_path provided
 
         Raises:
             RuntimeError: If server is not ready or SQL execution fails
+
+        Examples:
+            # Return results as string (default)
+            result = shell.execute_sql("SELECT * FROM table LIMIT 10")
+            
+            # Write results to Parquet
+            metadata = shell.execute_sql("SELECT * FROM large_table", output_path="/tmp/results")
         """
         if not self.is_ready:
             raise RuntimeError("Server is not ready. Call start() first.")
 
         fgac_log("SparkShell.execute_sql", f"Executing SQL: {sql[:100]}...")
+        if output_path:
+            fgac_log("SparkShell.execute_sql", f"Output path: {output_path}")
 
         try:
+            # Build request payload
+            payload = {"sql": sql}
+            if output_path:
+                payload["outputPath"] = output_path
+            
             response = requests.post(
                 f"{self.base_url}/sql",
                 headers={"Content-Type": "application/json"},
-                json={"sql": sql},
+                json=payload,
                 timeout=300  # 5 minutes timeout for long queries
             )
             fgac_log("SparkShell.execute_sql", f"Response status: {response.status_code}")
