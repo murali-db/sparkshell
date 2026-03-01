@@ -7,10 +7,11 @@ scalaVersion := "2.13.15"
 // Read Delta configuration from environment
 val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
 val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
-val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", "")
-val deltaArtifactSuffix = if (deltaSparkVersion.startsWith("4.0")) Some("4.0") else None
-val deltaSparkModule = deltaArtifactSuffix.map(s => s"delta-spark_" + s).getOrElse("delta-spark")
-val deltaIcebergModule = deltaArtifactSuffix.map(s => s"delta-iceberg_" + s).getOrElse("delta-iceberg")
+val sparkVersion = "4.0.0"
+val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", sparkVersion)
+val deltaArtifactSuffix = deltaSparkVersion.split('.').take(2).mkString(".")
+val deltaSparkModule = s"delta-spark_$deltaArtifactSuffix"
+val deltaIcebergModule = "delta-iceberg"
 val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVersion.startsWith("4.2")
 
 // Read Unity Catalog configuration from environment
@@ -76,7 +77,7 @@ javaOptions ++= Seq(
 
 libraryDependencies ++= Seq(
   // Spark
-  "org.apache.spark" %% "spark-sql" % "4.0.0",
+  "org.apache.spark" %% "spark-sql" % sparkVersion,
 
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% deltaSparkModule % deltaVersion,
