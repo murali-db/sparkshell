@@ -7,7 +7,7 @@ scalaVersion := "2.13.15"
 // Read Delta configuration from environment
 val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
 val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
-val sparkVersion = "4.0.0"
+val sparkVersion = "4.1.0"
 val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", sparkVersion)
 val deltaArtifactSuffix = deltaSparkVersion.split('.').take(2).mkString(".")
 val deltaSparkModule = s"delta-spark_$deltaArtifactSuffix"
