@@ -8,6 +8,7 @@ scalaVersion := "2.13.15"
 val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
 val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
 val sparkVersion = "4.1.0"
+val hadoopVersion = "3.4.2"
 val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", sparkVersion)
 val deltaArtifactSuffix = deltaSparkVersion.split('.').take(2).mkString(".")
 val deltaSparkModule = s"delta-spark_$deltaArtifactSuffix"
@@ -89,8 +90,8 @@ libraryDependencies ++= Seq(
 
   // Cloud Storage Support (S3, ADLS)
   // Note: GCS connector removed due to protobuf version conflict
-  "org.apache.hadoop" % "hadoop-aws" % "3.4.0",
-  "org.apache.hadoop" % "hadoop-azure" % "3.4.0",
+  "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+  "org.apache.hadoop" % "hadoop-azure" % hadoopVersion,
   // "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.22",
   "com.amazonaws" % "aws-java-sdk-bundle" % "1.12.262",
 
