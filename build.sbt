@@ -7,10 +7,12 @@ scalaVersion := "2.13.15"
 // Read Delta configuration from environment
 val deltaVersion = sys.env.getOrElse("DELTA_VERSION", "4.0.0")
 val deltaUseLocal = sys.env.getOrElse("DELTA_USE_LOCAL", "false").toBoolean
-val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", "")
-val deltaArtifactSuffix = if (deltaSparkVersion.startsWith("4.0")) Some("4.0") else None
-val deltaSparkModule = deltaArtifactSuffix.map(s => s"delta-spark_" + s).getOrElse("delta-spark")
-val deltaIcebergModule = deltaArtifactSuffix.map(s => s"delta-iceberg_" + s).getOrElse("delta-iceberg")
+val sparkVersion = "4.1.0"
+val hadoopVersion = "3.4.2"
+val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", sparkVersion)
+val deltaArtifactSuffix = deltaSparkVersion.split('.').take(2).mkString(".")
+val deltaSparkModule = s"delta-spark_$deltaArtifactSuffix"
+val deltaIcebergModule = "delta-iceberg"
 val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVersion.startsWith("4.2")
 
 // Read Unity Catalog configuration from environment
@@ -76,7 +78,7 @@ javaOptions ++= Seq(
 
 libraryDependencies ++= Seq(
   // Spark
-  "org.apache.spark" %% "spark-sql" % "4.0.0",
+  "org.apache.spark" %% "spark-sql" % sparkVersion,
 
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% deltaSparkModule % deltaVersion,
@@ -88,8 +90,8 @@ libraryDependencies ++= Seq(
 
   // Cloud Storage Support (S3, ADLS)
   // Note: GCS connector removed due to protobuf version conflict
-  "org.apache.hadoop" % "hadoop-aws" % "3.4.0",
-  "org.apache.hadoop" % "hadoop-azure" % "3.4.0",
+  "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+  "org.apache.hadoop" % "hadoop-azure" % hadoopVersion,
   // "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.22",
   "com.amazonaws" % "aws-java-sdk-bundle" % "1.12.262",
 
